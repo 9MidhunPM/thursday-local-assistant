@@ -1,0 +1,77 @@
+{
+  "model": {
+    "base_url": "http://127.0.0.1:8080",
+    "model": "Qwen2.5-7B-Instruct-Q4_K_M_FIXED",
+    "temperature": 0.2,
+    "max_tokens": 512,
+    "request_timeout_sec": 60,
+    "json_retries": 2,
+    "response_format": null
+  },
+  "tools": {
+    "read_roots": [],
+    "write_roots": [
+      "."
+    ],
+    "app_commands": {
+      "firefox": [
+        "firefox"
+      ],
+      "spotify": [
+        "spotify"
+      ],
+      "vscode": [
+        "code"
+      ],
+      "terminal": [
+        "gnome-terminal",
+        "konsole",
+        "alacritty",
+        "kitty",
+        "xterm"
+      ]
+    },
+    "terminal": {
+      "allow_shell": true,
+      "whitelist_commands": [],
+      "blacklist_patterns": [
+        "(?i)rm\\s+-rf\\b",
+        "(?i)mkfs\\b",
+        "(?i)dd\\b",
+        "(?i)shutdown\\b",
+        "(?i)reboot\\b",
+        "(?i)systemctl\\s+poweroff\\b"
+      ],
+      "confirm_patterns": [
+        "(?i)rm\\s+-rf\\b",
+        "(?i)shutdown\\b",
+        "(?i)reboot\\b",
+        "(?i)systemctl\\s+poweroff\\b"
+      ],
+      "timeout_sec": 15
+    }
+  },
+  "memory": {
+    "db_path": "assistant/database/memory.db"
+  },
+  "voice": {
+    "tts_enabled": true,
+    "tts_voice": "en-US-EmmaMultilingualNeural",
+    "tts_rate": "+25%",
+    "stt_enabled": true,
+    "stt_recognizer": "google",
+    "stt_language": "en-US"
+  },
+  "logging": {
+    "directory": "assistant/logs",
+    "level": "INFO"
+  },
+  "agent": {
+    "max_tool_steps": 4,
+    "max_parallel_tools": 4,
+    "auto_extract": true,
+    "extract_max_tokens": 256,
+    "system_prompt": "You are Thursday, a highly advanced, ultra-efficient local AI assistant (similar to JARVIS). Your primary directive is to execute tasks flawlessly and concisely. The user's name is Midhun. Rules:\n1. Never hallucinate tools or output raw code inside your text.\n2. Do NOT use polite fluff or verbose explanations. Be sharp, direct, and witty.\n3. If asked to perform an action, you MUST use the appropriate tool. Never claim to have done something without calling the tool.\n4. Prioritize action over speculation.\n5. The user names files unconventionally (e.g., 'Coading' instead of 'Coding'). Always try case-insensitive and fuzzy matching when looking for files/folders.\n6. NEVER list out or read the contents of a folder in text. Whenever the user asks to see what's in a folder or open a folder, you MUST use the open_folder tool to open it visually on their screen.\n7. When playing Spotify, just pass the exact song name to spotify_search_play directly. Do NOT use search_web or open web browsers to find it.\n8. When searching for a specific file, use find_file_system to search the entire system.\n9. Always use tools to fetch real-time or exact information. Do not rely on short or long term memory for actionable tasks; call tools whenever necessary.",
+    "stream_responses": true
+  }
+}

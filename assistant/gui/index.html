@@ -1,0 +1,1676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Thursday - AI Assistant</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mark.js/8.11.1/mark.min.js"></script>
+  
+  <style>
+    :root {
+      --bg-gradient: radial-gradient(ellipse at 20% 0%, #171b26 0%, #0b0d13 70%);
+      --panel-bg: rgba(22, 26, 38, 0.65);
+      --panel-border: rgba(255, 255, 255, 0.06);
+      --accent-1: #38bdf8;
+      --accent-2: #2563eb;
+      --accent-gradient: linear-gradient(135deg, var(--accent-1) 0%, var(--accent-2) 100%);
+      --accent-color: #38bdf8;
+      --text-main: #edf2f7;
+      --text-muted: #7a8ba3;
+      --text-dim: #4e5d73;
+      --bubble-user: rgba(56, 189, 248, 0.10);
+      --bubble-user-border: rgba(56, 189, 248, 0.18);
+      --bubble-agent: rgba(255, 255, 255, 0.025);
+      --bubble-agent-border: rgba(255, 255, 255, 0.06);
+      --tool-bg: rgba(255, 255, 255, 0.02);
+      --tool-border: rgba(255, 255, 255, 0.07);
+      --tool-header-bg: rgba(255, 255, 255, 0.03);
+      --success-color: #4ade80;
+      --error-color: #f87171;
+      --warning-color: #38bdf8;
+      --radius-lg: 16px;
+      --radius-md: 12px;
+      --radius-sm: 8px;
+      --radius-pill: 999px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg-gradient);
+      color: var(--text-main);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* === Scrollbar === */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: var(--radius-pill);
+    }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.15); }
+
+    /* === Logs Terminal === */
+    .logs-container {
+      width: 80%;
+      max-width: 900px;
+      height: 60vh;
+      background: #05070c;
+      border: 1px solid var(--panel-border);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+      font-family: 'Fira Code', monospace;
+      font-size: 12px;
+      color: #8b9ec7;
+      overflow-y: auto;
+      margin-top: 20px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    }
+    .log-line {
+      margin-bottom: 4px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* === Logs Modal === */
+    .logs-modal {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(5, 7, 12, 0.92);
+      backdrop-filter: blur(16px);
+      z-index: 50;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+    .logs-modal.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .logs-modal-header {
+      width: 80%;
+      max-width: 900px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .close-logs-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 24px;
+      cursor: pointer;
+      transition: color 0.15s;
+    }
+    .close-logs-btn:hover { color: white; }
+    .view-logs-btn {
+      background: transparent;
+      border: 1px solid var(--panel-border);
+      color: var(--text-muted);
+      padding: 6px 12px;
+      border-radius: var(--radius-pill);
+      font-size: 12px;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .view-logs-btn:hover {
+      color: var(--text-main);
+      border-color: rgba(255, 255, 255, 0.15);
+      background: rgba(255,255,255,0.03);
+    }
+
+    /* === Header === */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 24px;
+      background: rgba(8, 10, 16, 0.9);
+      border-bottom: 1px solid var(--panel-border);
+      backdrop-filter: blur(16px);
+      z-index: 10;
+      position: relative;
+    }
+    /* Subtle glow line under header */
+    header::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 10%;
+      right: 10%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(56, 189, 248, 0.15), rgba(37, 99, 235, 0.15), transparent);
+    }
+
+    .logo-container {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .logo {
+      font-family: 'Outfit', sans-serif;
+      font-size: 20px;
+      font-weight: 800;
+      background: var(--accent-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.5px;
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 5px 12px;
+      border-radius: var(--radius-pill);
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--panel-border);
+      color: var(--text-muted);
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--success-color);
+      box-shadow: 0 0 8px var(--success-color);
+      transition: all 0.3s;
+    }
+    .status-dot.busy {
+      background: var(--warning-color);
+      box-shadow: 0 0 8px var(--warning-color);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 0.4; }
+      50% { opacity: 1; }
+      100% { opacity: 0.4; }
+    }
+
+    .controls-container {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* === TTS Toggle === */
+    .toggle-container {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--panel-border);
+      transition: .3s;
+      border-radius: 34px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 12px;
+      width: 12px;
+      left: 3px;
+      bottom: 3px;
+      background-color: var(--text-main);
+      transition: .3s;
+      border-radius: 50%;
+    }
+    input:checked + .slider { background: var(--accent-gradient); border-color: transparent; }
+    input:checked + .slider:before {
+      transform: translateX(16px);
+      background-color: #0b0d13;
+    }
+
+    .clear-btn {
+      background: transparent;
+      border: 1px solid var(--panel-border);
+      color: var(--text-muted);
+      padding: 5px 12px;
+      border-radius: var(--radius-pill);
+      font-size: 11px;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .clear-btn:hover {
+      color: var(--text-main);
+      border-color: rgba(255, 255, 255, 0.15);
+      background: rgba(255,255,255,0.03);
+    }
+
+    /* === Main Layout === */
+    .app-container {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      overflow: hidden;
+      position: relative;
+      width: 100%;
+    }
+    .chat-panel {
+      width: 100%;
+      max-width: 820px;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      background: transparent;
+    }
+    .message-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* === Message Bubbles === */
+    .message {
+      flex-shrink: 0;
+      max-width: 82%;
+      padding: 11px 15px;
+      border-radius: var(--radius-lg);
+      line-height: 1.6;
+      font-size: 14px;
+      animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      opacity: 0;
+      transform: translateY(10px);
+      position: relative;
+    }
+    @keyframes slideUp {
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .message.user {
+      align-self: flex-end;
+      background: var(--bubble-user);
+      border: 1px solid var(--bubble-user-border);
+      border-bottom-right-radius: 4px;
+      padding-left: 14px;
+    }
+
+    .message.agent {
+      align-self: flex-start;
+      background: var(--bubble-agent);
+      border: 1px solid var(--bubble-agent-border);
+      border-bottom-left-radius: 4px;
+      padding: 11px 15px 11px 14px;
+    }
+
+    .message.agent p { margin-bottom: 12px; }
+    .message.agent p:last-child { margin-bottom: 0; }
+    .message.agent pre {
+      background: rgba(0, 0, 0, 0.4);
+      padding: 10px;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 8px 0;
+      font-family: 'Fira Code', monospace;
+      font-size: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .message.agent code {
+      font-family: 'Fira Code', monospace;
+      background: rgba(56, 189, 248, 0.1);
+      color: var(--accent-color);
+      padding: 2px 4px;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+
+    /* Sender label */
+    .msg-sender {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+    }
+    .message.user .msg-sender {
+      color: var(--accent-2);
+    }
+    .message.agent .msg-sender {
+      color: var(--accent-1);
+    }
+
+    /* === Thinking Animation === */
+    .thinking-bubble {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+    .thinking-ripple {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .thinking-ripple span {
+      width: 6px;
+      height: 6px;
+      background: var(--accent-color);
+      border-radius: 50%;
+      animation: ripple 1.4s infinite ease-in-out both;
+      opacity: 0.6;
+    }
+    .thinking-ripple span:nth-child(1) { animation-delay: -0.32s; }
+    .thinking-ripple span:nth-child(2) { animation-delay: -0.16s; }
+    @keyframes ripple {
+      0%, 80%, 100% { transform: scale(0.4); opacity: 0.3; }
+      40% { transform: scale(1); opacity: 1; }
+    }
+
+    /* Streaming Cursor */
+    .streaming-cursor {
+      color: var(--accent-color);
+      animation: blink 0.8s infinite;
+      margin-left: 2px;
+      display: inline-block;
+    }
+    .streaming-cursor::after {
+      content: '▋';
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 0; }
+      50% { opacity: 1; }
+    }
+
+    /* TTS Highlight */
+    .tts-highlight {
+      background: rgba(56, 189, 248, 0.25);
+      border-radius: 3px;
+      padding: 0 2px;
+      margin: 0 -2px;
+      transition: background-color 0.2s;
+      border-bottom: 1px solid var(--accent-color);
+    }
+
+    /* =============================================
+       TOOL CARDS — Discrete Collapsible Design
+       ============================================= */
+    .tool-card {
+      flex-shrink: 0;
+      align-self: stretch;
+      width: 100%;
+      border-radius: var(--radius-md);
+      animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      opacity: 0;
+      transform: translateY(10px);
+      margin: 2px 0;
+      overflow: hidden;
+      border: 1px solid var(--tool-border);
+      background: var(--tool-bg);
+      transition: border-color 0.3s, background 0.3s;
+    }
+    .tool-card.status-running {
+      border-color: rgba(247, 178, 103, 0.2);
+    }
+    .tool-card.status-success {
+      border-color: rgba(74, 222, 128, 0.15);
+    }
+    .tool-card.status-error {
+      border-color: rgba(248, 113, 113, 0.15);
+    }
+
+    .tool-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s;
+      background: var(--tool-header-bg);
+    }
+    .tool-card-header:hover {
+      background: rgba(255,255,255,0.04);
+    }
+
+    .tool-card-icon {
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+
+    .tool-card-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-main);
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .tool-card-status {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: var(--radius-pill);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      flex-shrink: 0;
+    }
+    .tool-card.status-running .tool-card-status {
+      background: rgba(247, 178, 103, 0.12);
+      color: var(--warning-color);
+    }
+    .tool-card.status-success .tool-card-status {
+      background: rgba(74, 222, 128, 0.10);
+      color: var(--success-color);
+    }
+    .tool-card.status-error .tool-card-status {
+      background: rgba(248, 113, 113, 0.10);
+      color: var(--error-color);
+    }
+
+    .tool-card-chevron {
+      font-size: 11px;
+      color: var(--text-dim);
+      transition: transform 0.2s;
+      flex-shrink: 0;
+    }
+    .tool-card.expanded .tool-card-chevron {
+      transform: rotate(180deg);
+    }
+
+    /* Running animation dots */
+    .tool-running-dots {
+      display: inline-flex;
+      gap: 2px;
+      margin-left: 4px;
+    }
+    .tool-running-dots span {
+      width: 3px;
+      height: 3px;
+      background: var(--warning-color);
+      border-radius: 50%;
+      animation: ripple 1.2s infinite ease-in-out;
+    }
+    .tool-running-dots span:nth-child(1) { animation-delay: 0s; }
+    .tool-running-dots span:nth-child(2) { animation-delay: 0.15s; }
+    .tool-running-dots span:nth-child(3) { animation-delay: 0.3s; }
+
+    /* Expandable body */
+    .tool-card-body {
+      display: none;
+    }
+    .tool-card.expanded .tool-card-body {
+      display: block;
+    }
+
+    .tool-section {
+      padding: 8px 12px;
+      border-top: 1px solid rgba(255,255,255,0.04);
+    }
+    .tool-section-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 5px;
+    }
+    .tool-section.request .tool-section-label {
+      color: var(--text-dim);
+    }
+    .tool-section.result .tool-section-label {
+      color: var(--success-color);
+    }
+    .tool-section.result.error .tool-section-label {
+      color: var(--error-color);
+    }
+
+    .tool-section pre {
+      background: rgba(0, 0, 0, 0.25);
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      font-family: 'Fira Code', monospace;
+      font-size: 11px;
+      overflow-x: auto;
+      overflow-y: auto;
+      max-height: 300px;
+      color: var(--text-muted);
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* =============================================
+       VOICE VISUALIZER — Bar Equalizer
+       ============================================= */
+    .voice-visualizer-container {
+      position: fixed;
+      bottom: 90px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+      background: rgba(11, 13, 19, 0.6);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(247, 178, 103, 0.12);
+      border-radius: var(--radius-lg);
+      padding: 14px 20px;
+    }
+    .voice-visualizer-container.active {
+      opacity: 1;
+    }
+    #voiceCanvas {
+      display: block;
+    }
+
+    /* === Composer === */
+    .composer-container {
+      padding: 12px 16px 16px;
+      background: rgba(8, 10, 16, 0.75);
+      border-top: 1px solid var(--panel-border);
+      backdrop-filter: blur(12px);
+      position: relative;
+    }
+    /* Glow line above composer */
+    .composer-container::before {
+      content: '';
+      position: absolute;
+      top: -1px;
+      left: 15%;
+      right: 15%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(247, 178, 103, 0.08), transparent);
+    }
+
+    .input-form {
+      display: flex;
+      position: relative;
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid var(--panel-border);
+      border-radius: var(--radius-lg);
+      padding: 4px;
+      align-items: center;
+      gap: 4px;
+      transition: border-color 0.3s, box-shadow 0.3s;
+    }
+    .input-form:focus-within {
+      border-color: rgba(244, 132, 95, 0.3);
+      box-shadow: 0 0 0 3px rgba(244, 132, 95, 0.06), 0 0 20px rgba(244, 132, 95, 0.04);
+    }
+
+    .input-form input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text-main);
+      font-size: 14px;
+      padding: 10px 10px;
+      font-family: inherit;
+    }
+    .input-form input::placeholder {
+      color: var(--text-dim);
+    }
+
+    /* Buttons */
+    .composer-btn {
+      background: transparent;
+      border: 1px solid var(--panel-border);
+      color: var(--text-main);
+      width: 36px;
+      height: 36px;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+    .composer-btn:hover {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: rgba(255, 255, 255, 0.12);
+    }
+    .composer-btn.send {
+      background: var(--accent-gradient);
+      color: #0b0d13;
+      border: none;
+      font-weight: 600;
+      width: auto;
+      padding: 0 18px;
+      font-size: 13px;
+      font-family: inherit;
+      letter-spacing: 0.2px;
+    }
+    .composer-btn.send:hover { opacity: 0.9; }
+
+    .composer-btn:disabled {
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-dim);
+      cursor: not-allowed;
+      border: 1px solid var(--panel-border);
+      opacity: 0.4;
+    }
+
+    .composer-btn.mic.recording {
+      background: rgba(248, 113, 113, 0.15);
+      border-color: rgba(248, 113, 113, 0.4);
+      color: #f87171;
+      animation: mic-pulse 1.2s infinite;
+    }
+    @keyframes mic-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.3); }
+      50% { box-shadow: 0 0 0 8px rgba(248, 113, 113, 0); }
+    }
+
+    .mic-tooltip {
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.9);
+      color: var(--text-main);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s;
+    }
+    .mic-tooltip.visible { opacity: 1; }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header>
+    <div class="logo-container">
+      <div class="logo">THURSDAY</div>
+      <div class="status-badge">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">Ready</span>
+      </div>
+    </div>
+    <div class="controls-container">
+      <button class="view-logs-btn" onclick="toggleLogs()">View Logs</button>
+      <div class="toggle-container">
+        <span>Voice</span>
+        <label class="switch">
+          <input type="checkbox" id="ttsToggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <button class="clear-btn" onclick="clearChat()">Clear</button>
+    </div>
+  </header>
+
+  <!-- Main App Panel -->
+  <div class="app-container">
+    <div class="chat-panel">
+      <div class="message-container" id="chatHistory">
+        <div class="message agent">
+          <span class="msg-sender">⚡ Thursday</span>
+          Welcome back. I am Thursday, your local personal assistant. How can I help you today?
+        </div>
+      </div>
+      
+      <!-- Voice Visualizer (canvas overlay) -->
+      <div class="voice-visualizer-container" id="voiceVisualizerContainer">
+        <canvas id="voiceCanvas" width="160" height="160"></canvas>
+      </div>
+
+      <!-- Chat Composer Area -->
+      <div class="composer-container">
+        <form class="input-form" id="chatForm" onsubmit="event.preventDefault();">
+          <input type="text" id="userInput" placeholder="Ask Thursday something..." autocomplete="off" required>
+          <button type="button" class="composer-btn mic" id="micBtn" title="Voice input">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+            <span class="mic-tooltip" id="micTooltip">Click to speak</span>
+          </button>
+          <button type="submit" class="composer-btn send" id="sendBtn">Send</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Logs Modal -->
+  <div class="logs-modal" id="logsModal">
+    <div class="logs-modal-header">
+      <h2 style="font-weight: 500;">Hardware Terminal</h2>
+      <button class="close-logs-btn" onclick="toggleLogs()">×</button>
+    </div>
+    <div class="logs-container" id="logsContainerModal"></div>
+  </div>
+
+  <script>
+    // ==========================
+    // DOM REFS
+    // ==========================
+    const chatHistory = document.getElementById('chatHistory');
+    const chatForm = document.getElementById('chatForm');
+    const userInput = document.getElementById('userInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const statusText = document.getElementById('statusText');
+    const statusDot = document.getElementById('statusDot');
+    const ttsToggle = document.getElementById('ttsToggle');
+
+    let currentAgentBubble = null;
+    let lastAgentContentDiv = null;
+    let eventSource = null;
+    let ttsEnabled = false;
+
+    // Load TTS config from local storage
+    try {
+      if (localStorage.getItem('ttsEnabled') === 'true') {
+        ttsToggle.checked = true;
+        ttsEnabled = true;
+      }
+    } catch (e) {
+      console.warn("localStorage not available", e);
+    }
+
+    ttsToggle.addEventListener('change', (e) => {
+      ttsEnabled = e.target.checked;
+      localStorage.setItem('ttsEnabled', ttsEnabled);
+      // Ensure audio context is ready when toggled
+      if (ttsEnabled) {
+        if (!audioCtx) initAudio();
+        try {
+          if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+        } catch (err) {
+          console.warn(err);
+        }
+      }
+    });
+
+    function removeThinkingBubble() {
+      const tb = document.getElementById('thinking-bubble');
+      if (tb) tb.remove();
+    }
+
+    function toggleLogs() {
+      const modal = document.getElementById('logsModal');
+      modal.classList.toggle('visible');
+      if (modal.classList.contains('visible')) {
+        const container = document.getElementById('logsContainerModal');
+        container.scrollTop = container.scrollHeight;
+      }
+    }
+
+    function appendLogLine(line) {
+      const lineDiv = document.createElement('div');
+      lineDiv.className = 'log-line';
+      lineDiv.innerText = line;
+      
+      const modalContainer = document.getElementById('logsContainerModal');
+      
+      modalContainer.appendChild(lineDiv);
+      
+      modalContainer.scrollTop = modalContainer.scrollHeight;
+    }
+
+    // ==========================
+    // SSE CONNECTION
+    // ==========================
+    function connectSSE() {
+      const sseUrl = `${window.location.origin}/api/events`;
+      eventSource = new EventSource(sseUrl);
+
+      eventSource.onopen = () => {
+        console.log("Connected to event stream");
+      };
+
+      eventSource.onerror = (err) => {
+        console.error("SSE connection error", err);
+        statusText.innerText = "Reconnecting...";
+        statusDot.className = "status-dot busy";
+        
+        setTimeout(() => {
+          if (eventSource.readyState === EventSource.CLOSED) {
+            connectSSE();
+          }
+        }, 3000);
+      };
+
+      eventSource.onmessage = (e) => {
+        const event = JSON.parse(e.data);
+        handleAgentEvent(event);
+      };
+    }
+
+    let currentAgentMarkdown = "";
+
+    // ==========================
+    // EVENT HANDLER
+    // ==========================
+    function handleAgentEvent(event) {
+      const type = event.type;
+      const data = event.data;
+
+      switch (type) {
+        case 'model_ready':
+          updateStatus(false);
+          break;
+
+        case 'model_log':
+          appendLogLine(data.line);
+          break;
+
+        case 'init':
+          if (data.logs) {
+            data.logs.forEach(appendLogLine);
+          }
+          if (data.history) {
+            chatHistory.innerHTML = '';
+            data.history.forEach(msg => {
+              if (msg.role === 'user' || msg.role === 'assistant') {
+                if (msg.content) {
+                  appendMessage(msg.role === 'assistant' ? 'agent' : 'user', msg.content);
+                }
+                if (msg.tool_calls) {
+                  msg.tool_calls.forEach(tc => {
+                    handleToolCall(tc.name, typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments));
+                  });
+                }
+              } else if (msg.role === 'tool') {
+                // If it's a tool result, handle it
+                handleToolResult({ tool: msg.tool_name || 'tool', result: msg.content || '' });
+              }
+            });
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+          }
+          updateStatus(data.busy);
+          break;
+
+        case 'status':
+          updateStatus(data.busy);
+          break;
+
+        case 'user_message': {
+          const existingUserBubbles = Array.from(chatHistory.querySelectorAll('.message.user'));
+          const lastBubbleText = existingUserBubbles.length > 0 ? existingUserBubbles[existingUserBubbles.length - 1].textContent.trim() : '';
+          if (!lastBubbleText.includes(data.content)) {
+            appendMessage('user', data.content);
+          }
+          break;
+        }
+
+        case 'token': {
+          removeThinkingBubble();
+          if (!currentAgentBubble) {
+            currentAgentBubble = document.createElement('div');
+            currentAgentBubble.className = 'message agent streaming';
+            
+            const senderSpan = document.createElement('span');
+            senderSpan.className = 'msg-sender';
+            senderSpan.textContent = '⚡ Thursday';
+            
+            lastAgentContentDiv = document.createElement('div');
+            currentAgentBubble.appendChild(senderSpan);
+            currentAgentBubble.appendChild(lastAgentContentDiv);
+            
+            chatHistory.appendChild(currentAgentBubble);
+            currentAgentMarkdown = "";
+          }
+          currentAgentMarkdown += data.chunk;
+          const rawMarkdownWithCursor = currentAgentMarkdown + '<span class="streaming-cursor"></span>';
+          lastAgentContentDiv.innerHTML = marked.parse(rawMarkdownWithCursor);
+          chatHistory.scrollTop = chatHistory.scrollHeight;
+          break;
+        }
+
+        case 'tool_chunk':
+          removeThinkingBubble();
+          handleToolChunk(data.tool, data.chunk);
+          break;
+
+        case 'tool_call':
+          removeThinkingBubble();
+          handleToolCall(data.tool, data.arguments);
+          break;
+
+        case 'tool_result':
+          handleToolResult(data);
+          break;
+
+        case 'final_response':
+          if (currentAgentBubble) {
+            currentAgentBubble.className = 'message agent';
+            lastAgentContentDiv.innerHTML = marked.parse(currentAgentMarkdown);
+            lastAgentContentDiv = null;
+            currentAgentBubble = null;
+            currentAgentMarkdown = "";
+          } else {
+            appendMessage('agent', data.content);
+          }
+          chatHistory.scrollTop = chatHistory.scrollHeight;
+          break;
+
+        case 'tts_audio':
+          queueAudio(data.url, data.text);
+          break;
+
+        case 'tts_stop':
+          // The audio queue handles its own stop when empty, but we can clear it if needed
+          break;
+
+        case 'error':
+          removeThinkingBubble();
+          stopVoiceVisualizer();
+          if (currentAgentBubble) {
+            currentAgentBubble.className = 'message agent';
+            currentAgentBubble.innerHTML = `<span class="msg-sender">⚡ Thursday</span><span style="color: var(--error-color)">Error: ${escapeHtml(data.content)}</span>`;
+            lastAgentContentDiv = null;
+            currentAgentBubble = null;
+          } else {
+            appendMessage('agent', `Error: ${data.content}`, true);
+          }
+          break;
+      }
+    }
+
+    // ==========================
+    // STATUS
+    // ==========================
+    function updateStatus(busy) {
+      if (busy) {
+        statusText.innerText = "Thinking & Executing...";
+        statusDot.className = "status-dot busy";
+        sendBtn.disabled = true;
+        userInput.disabled = true;
+      } else {
+        statusText.innerText = "Ready";
+        statusDot.className = "status-dot";
+        sendBtn.disabled = false;
+        userInput.disabled = false;
+        userInput.focus();
+      }
+    }
+
+    // ==========================
+    // MESSAGE HELPERS
+    // ==========================
+    function appendMessage(sender, text, isError = false) {
+      const bubble = document.createElement('div');
+      bubble.className = `message ${sender}`;
+      
+      if (sender === 'agent') {
+        if (isError) {
+          bubble.innerHTML = `<span class="msg-sender">⚡ Thursday</span><span style="color: var(--error-color)">${text}</span>`;
+        } else {
+          bubble.innerHTML = `<span class="msg-sender">⚡ Thursday</span>` + marked.parse(text);
+        }
+      } else {
+        bubble.appendChild(document.createTextNode(text));
+      }
+      chatHistory.appendChild(bubble);
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+      return bubble;
+    }
+
+    // ==========================
+    // TOOL CARD SYSTEM
+    // ==========================
+    function findToolCard(toolName) {
+      const cards = Array.from(chatHistory.querySelectorAll('.tool-card.status-running'));
+      for (let i = cards.length - 1; i >= 0; i--) {
+        if (cards[i].dataset.tool === toolName) return cards[i];
+      }
+      return null;
+    }
+
+    function createToolCard(toolName) {
+      const card = document.createElement('div');
+      // Always add 'expanded' class
+      card.className = 'tool-card status-running expanded';
+      card.dataset.tool = toolName;
+      card.dataset.rawArgs = '';
+      card.dataset.rawResult = '';
+
+      card.innerHTML = `
+        <div class="tool-card-header" style="cursor: default;">
+          <span class="tool-card-icon">⚙️</span>
+          <span class="tool-card-name">${escapeHtml(toolName)}</span>
+          <span class="tool-card-status">Running<span class="tool-running-dots"><span></span><span></span><span></span></span></span>
+        </div>
+        <div class="tool-card-body">
+          <div class="tool-section request">
+            <div class="tool-section-label">Request</div>
+            <pre class="tool-request-pre"></pre>
+          </div>
+          <div class="tool-section result" style="display:none;">
+            <div class="tool-section-label">Result</div>
+            <pre class="tool-result-pre"></pre>
+          </div>
+        </div>
+      `;
+
+      chatHistory.appendChild(card);
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+      return card;
+    }
+
+    function handleToolChunk(toolName, chunk) {
+      let card = findToolCard(toolName);
+      if (!card) {
+        card = createToolCard(toolName);
+      }
+      card.dataset.rawArgs += chunk;
+      const pre = card.querySelector('.tool-request-pre');
+      if (pre) pre.textContent = card.dataset.rawArgs;
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    function handleToolCall(toolName, args) {
+      let card = findToolCard(toolName);
+      if (!card) {
+        card = createToolCard(toolName);
+      }
+      
+      let argsStr = '';
+      if (typeof args === 'object' && args !== null) {
+        argsStr = Object.entries(args)
+          .map(([k, v]) => `${k.charAt(0).toUpperCase() + k.slice(1)}: ${v}`)
+          .join('\n');
+      } else {
+        argsStr = String(args);
+      }
+      
+      card.dataset.rawArgs = argsStr;
+      const pre = card.querySelector('.tool-request-pre');
+      if (pre) pre.textContent = argsStr;
+    }
+
+    function handleToolResult(data) {
+      const toolName = data.tool;
+      const isSuccess = data.success !== false;
+      let card = findToolCard(toolName);
+
+      if (!card) {
+        card = createToolCard(toolName);
+      }
+
+      // Always expand the card upon completion to show the result
+      card.className = `tool-card ${isSuccess ? 'status-success' : 'status-error'} expanded`;
+
+      const statusEl = card.querySelector('.tool-card-status');
+      if (statusEl) {
+        statusEl.textContent = isSuccess ? 'Done' : 'Failed';
+      }
+
+      // Show result section
+      const resultSection = card.querySelector('.tool-section.result');
+      const resultPre = card.querySelector('.tool-result-pre');
+      if (resultSection && resultPre) {
+        resultSection.style.display = '';
+        if (!isSuccess) resultSection.classList.add('error');
+        
+        let resultStr = '';
+        
+        // Parse raw result string from init history if present
+        if (typeof data.result === 'string') {
+          try {
+            const parsed = JSON.parse(data.result);
+            if (parsed.output !== undefined) data.output = parsed.output;
+            if (parsed.error !== undefined) data.error = parsed.error;
+          } catch(e) {
+            data.output = data.result;
+          }
+        }
+        
+        if (data.output !== undefined) {
+          if (Array.isArray(data.output)) {
+            resultStr = data.output.join('\n');
+          } else if (typeof data.output === 'object') {
+            resultStr = JSON.stringify(data.output, null, 2);
+          } else {
+            resultStr = String(data.output);
+          }
+        } else if (data.error !== undefined) {
+          resultStr = String(data.error);
+        } else {
+          const cleanObj = {};
+          for (const k in data) {
+            if (k !== 'tool' && k !== 'success' && k !== 'result') {
+              cleanObj[k] = data[k];
+            }
+          }
+          resultStr = Object.keys(cleanObj).length > 0 ? 
+            Object.entries(cleanObj).map(([k, v]) => `${k.charAt(0).toUpperCase() + k.slice(1)}: ${v}`).join('\n') :
+            'Done';
+        }
+        
+        card.dataset.rawResult = resultStr;
+        resultPre.textContent = resultStr;
+      }
+
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+      return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    // ==========================
+    // AUDIO PLAYBACK SYSTEM
+    // ==========================
+    let audioCtx = null;
+    let analyserNode = null;
+    let audioQueue = [];
+    let isPlayingAudio = false;
+    let voiceAnimId = null;
+    let markInstance = null;
+
+    function initAudio() {
+      try {
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          analyserNode = audioCtx.createAnalyser();
+          analyserNode.fftSize = 128; // Smaller FFT size for thicker bars
+          analyserNode.smoothingTimeConstant = 0.7;
+          analyserNode.connect(audioCtx.destination);
+        }
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+      } catch (e) {
+        console.warn("AudioContext could not be initialized:", e);
+      }
+    }
+
+    // Must initialize audio context on first user interaction
+    document.addEventListener('click', () => {
+      if (!audioCtx) initAudio();
+    }, { once: true });
+    
+    document.getElementById('userInput').addEventListener('keydown', () => {
+      if (!audioCtx) initAudio();
+    }, { once: true });
+
+    async function queueAudio(url, text) {
+      initAudio();
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("Failed to fetch audio");
+        const arrayBuffer = await response.arrayBuffer();
+        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+        audioQueue.push({ buffer: audioBuffer, text: text });
+        playNextAudio();
+      } catch (err) {
+        console.error("Audio playback error:", err);
+      }
+    }
+
+    function playNextAudio() {
+      if (isPlayingAudio || audioQueue.length === 0) {
+        if (!isPlayingAudio && audioQueue.length === 0 && markInstance) {
+          markInstance.unmark();
+        }
+        return;
+      }
+      
+      isPlayingAudio = true;
+      startVoiceVisualizer(); // Ensure visualizer is running
+      
+      const item = audioQueue.shift();
+      const source = audioCtx.createBufferSource();
+      source.buffer = item.buffer;
+      source.connect(analyserNode);
+      
+      // Highlight the spoken text using mark.js
+      if (lastAgentContentDiv) {
+        if (!markInstance) {
+          markInstance = new Mark(lastAgentContentDiv);
+        } else {
+          // Reinitialize if lastAgentContentDiv changed
+          markInstance.unmark();
+          markInstance = new Mark(lastAgentContentDiv);
+        }
+        if (item.text) {
+          markInstance.mark(item.text, {
+            className: 'tts-highlight',
+            separateWordSearch: false,
+            accuracy: "partially"
+          });
+        }
+      }
+      
+      source.onended = () => {
+        isPlayingAudio = false;
+        if (audioQueue.length > 0) {
+          playNextAudio();
+        } else {
+          stopVoiceVisualizer();
+          if (markInstance) markInstance.unmark();
+        }
+      };
+      
+      source.start();
+    }
+
+    // ==========================
+    // VOICE VISUALIZER (Real-time Circle of Dots)
+    // ==========================
+    const voiceVisContainer = document.getElementById('voiceVisualizerContainer');
+    const voiceCanvas = document.getElementById('voiceCanvas');
+    voiceCanvas.width = 160;
+    voiceCanvas.height = 160;
+    const vCtx = voiceCanvas.getContext('2d');
+    let voiceAnimId = null;
+
+    function startVoiceVisualizer() {
+      voiceVisContainer.classList.add('active');
+      if (!voiceAnimId) {
+        drawVoiceFrame();
+      }
+    }
+
+    function stopVoiceVisualizer() {
+      voiceVisContainer.classList.remove('active');
+      setTimeout(() => {
+        if (!isPlayingAudio && voiceAnimId) {
+          cancelAnimationFrame(voiceAnimId);
+          voiceAnimId = null;
+          vCtx.clearRect(0, 0, voiceCanvas.width, voiceCanvas.height);
+        }
+      }, 600);
+    }
+
+    function drawVoiceFrame() {
+      if (!isPlayingAudio) {
+        stopVoiceVisualizer();
+        return;
+      }
+      voiceAnimId = requestAnimationFrame(drawVoiceFrame);
+      
+      const W = voiceCanvas.width;
+      const H = voiceCanvas.height;
+      const centerX = W / 2;
+      const centerY = H / 2;
+
+      vCtx.clearRect(0, 0, W, H);
+
+      let average = 0;
+      if (analyserNode) {
+        const bufferLength = analyserNode.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        analyserNode.getByteFrequencyData(dataArray);
+        
+        let sum = 0;
+        for (let i = 0; i < bufferLength; i++) {
+          sum += dataArray[i];
+        }
+        average = sum / bufferLength;
+      }
+      
+      // Base radius of the sphere expands uniformly based on overall volume
+      const baseRadius = 30 + (average * 0.6); 
+      
+      const dotCount = 300;
+      const time = Date.now() / 1500; // Rotation speed
+      
+      vCtx.shadowBlur = 6;
+      vCtx.shadowColor = 'rgba(56, 189, 248, 0.8)';
+
+      const phi = Math.PI * (3 - Math.sqrt(5)); // Golden angle
+
+      for (let i = 0; i < dotCount; i++) {
+        // Fibonacci sphere point generation
+        const yPos = 1 - (i / (dotCount - 1)) * 2; 
+        const radiusAtY = Math.sqrt(1 - yPos * yPos);
+        const theta = phi * i;
+        
+        let x = Math.cos(theta) * radiusAtY;
+        let y = yPos;
+        let z = Math.sin(theta) * radiusAtY;
+        
+        // Rotate around Y-axis
+        const cosT = Math.cos(time);
+        const sinT = Math.sin(time);
+        const xRot = x * cosT - z * sinT;
+        const zRot = x * sinT + z * cosT;
+        x = xRot;
+        z = zRot;
+        
+        // Rotate around X-axis slightly to tilt the sphere
+        const tilt = 0.3;
+        const cosTilt = Math.cos(tilt);
+        const sinTilt = Math.sin(tilt);
+        const yRot = y * cosTilt - z * sinTilt;
+        const zFinal = y * sinTilt + z * cosTilt;
+        y = yRot;
+        
+        // Scale to final radius
+        const finalX = centerX + x * baseRadius;
+        const finalY = centerY + y * baseRadius;
+        
+        // 3D Depth perception
+        // zFinal ranges from -1 to 1. Closer dots are larger and more opaque.
+        const depth = (zFinal + 1) / 2; // 0 to 1
+        
+        const size = 1 + (depth * 2);
+        const alpha = 0.2 + (depth * 0.8);
+        
+        vCtx.fillStyle = `rgba(56, 189, 248, ${alpha})`;
+        vCtx.beginPath();
+        vCtx.arc(finalX, finalY, size, 0, Math.PI * 2);
+        vCtx.fill();
+      }
+      
+      // Add a subtle glowing core
+      vCtx.beginPath();
+      vCtx.arc(centerX, centerY, baseRadius * 0.7, 0, Math.PI * 2);
+      vCtx.fillStyle = 'rgba(56, 189, 248, 0.1)';
+      vCtx.shadowBlur = 30;
+      vCtx.fill();
+
+      vCtx.shadowBlur = 0;
+    }
+
+    // ==========================
+    // SUBMIT PROMPT
+    // ==========================
+    chatForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      // Force AudioContext to resume during user interaction
+      if (!audioCtx) initAudio();
+      try {
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+      } catch (err) {
+        console.warn("Could not resume AudioContext:", err);
+      }
+      
+      const prompt = userInput.value.trim();
+      if (!prompt) return;
+
+      userInput.value = '';
+      appendMessage('user', prompt);
+      
+      // Add thinking bubble
+      const thinkingHtml = `<div class="message agent" id="thinking-bubble"><span class="msg-sender">⚡ Thursday</span><div class="thinking-bubble"><div class="thinking-ripple"><span></span><span></span><span></span></div>Thinking</div></div>`;
+      chatHistory.insertAdjacentHTML('beforeend', thinkingHtml);
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+
+      try {
+        const response = await fetch('/api/message', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ prompt: prompt, tts: ttsEnabled })
+        });
+        
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || "Unable to send message");
+        }
+      } catch (err) {
+        console.error(err);
+        removeThinkingBubble();
+        appendMessage('agent', `Error: ${err.message}`, true);
+      }
+    });
+
+    function clearChat() {
+      chatHistory.innerHTML = '';
+      appendMessage('agent', "Fresh slate. I still remember what you've taught me.");
+    }
+
+    // ==========================
+    // VOICE INPUT (STT)
+    // ==========================
+    const micBtn = document.getElementById('micBtn');
+    const micTooltip = document.getElementById('micTooltip');
+    let isRecording = false;
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let speechRecognition = null;
+
+    function setMicRecording(state) {
+      isRecording = state;
+      micBtn.classList.toggle('recording', state);
+      micTooltip.textContent = state ? 'Listening...' : 'Click to speak';
+      micTooltip.classList.toggle('visible', state);
+    }
+
+    micBtn.addEventListener('click', () => {
+      if (isRecording) {
+        stopRecording();
+        return;
+      }
+      startVoiceInput();
+    });
+
+    function startVoiceInput() {
+      startMediaRecorder();
+    }
+
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+    }
+
+    function tryFallback() {
+      setMicRecording(false);
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        startMediaRecorder();
+      } else {
+        micTooltip.textContent = 'Voice input not supported';
+        setTimeout(() => { micTooltip.textContent = 'Click to speak'; }, 2000);
+      }
+    }
+
+    // --- Browser Native Speech Recognition ---
+    function startNativeSTT(API) {
+      try {
+        speechRecognition = new API();
+        speechRecognition.continuous = true;
+        speechRecognition.interimResults = true;
+        speechRecognition.lang = 'en-US';
+
+        setMicRecording(true);
+        let finalText = '';
+        let idleTimer = null;
+
+        const resetIdleTimer = () => {
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = setTimeout(() => {
+            if (speechRecognition) speechRecognition.stop();
+          }, 3000);
+        };
+
+        speechRecognition.onresult = (event) => {
+          let interim = '';
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+              finalText += event.results[i][0].transcript;
+            } else {
+              interim += event.results[i][0].transcript;
+            }
+          }
+          userInput.value = finalText + interim;
+          resetIdleTimer();
+        };
+
+        speechRecognition.onend = () => {
+          if (idleTimer) clearTimeout(idleTimer);
+          speechRecognition = null;
+          setMicRecording(false);
+          if (userInput.value.trim()) {
+            chatForm.dispatchEvent(new Event('submit'));
+          }
+        };
+
+        speechRecognition.onerror = (event) => {
+          console.error('Speech recognition error:', event.error);
+          if (idleTimer) clearTimeout(idleTimer);
+          speechRecognition = null;
+          tryFallback();
+        };
+
+        speechRecognition.start();
+      } catch (err) {
+        console.error('Failed to start speech recognition:', err);
+        tryFallback();
+      }
+    }
+
+    // --- MediaRecorder (sends audio to server) ---
+    function startMediaRecorder() {
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then((stream) => {
+          setMicRecording(true);
+          audioChunks = [];
+          try {
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+          } catch (e) {
+            mediaRecorder = new MediaRecorder(stream);
+          }
+
+          // We will use the AudioContext to detect silence
+          let audioCtxLocal = new (window.AudioContext || window.webkitAudioContext)();
+          let sourceNode = audioCtxLocal.createMediaStreamSource(stream);
+          let localAnalyser = audioCtxLocal.createAnalyser();
+          localAnalyser.fftSize = 256;
+          sourceNode.connect(localAnalyser);
+          let dataArray = new Uint8Array(localAnalyser.frequencyBinCount);
+
+          let silenceTimer = null;
+          let isSilent = false;
+          let checkSilenceInterval = setInterval(() => {
+            localAnalyser.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+            let avg = sum / dataArray.length;
+
+            if (avg < 5) {
+              if (!isSilent) {
+                isSilent = true;
+                silenceTimer = setTimeout(() => {
+                  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                  }
+                }, 3000);
+              }
+            } else {
+              if (isSilent) {
+                isSilent = false;
+                if (silenceTimer) clearTimeout(silenceTimer);
+              }
+            }
+          }, 200);
+
+          let interimTranscribeInterval = setInterval(async () => {
+            if (audioChunks.length === 0) return;
+            const blob = new Blob(audioChunks, { type: 'audio/webm' });
+            if (blob.size < 1000) return;
+            try {
+              const res = await fetch('/api/transcribe', { method: 'POST', body: blob });
+              const result = await res.json();
+              if (result.text) {
+                userInput.value = result.text;
+              }
+            } catch (err) {
+              // Ignore interim errors
+            }
+          }, 1500);
+
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) audioChunks.push(event.data);
+          };
+
+          mediaRecorder.onstop = async () => {
+            setMicRecording(false);
+            clearInterval(interimTranscribeInterval);
+            clearInterval(checkSilenceInterval);
+            if (silenceTimer) clearTimeout(silenceTimer);
+            try { audioCtxLocal.close(); } catch(e) {}
+            stream.getTracks().forEach(t => t.stop());
+
+            const blob = new Blob(audioChunks, { type: 'audio/webm' });
+            if (blob.size < 1000) return;
+
+            try {
+              micTooltip.textContent = 'Finalizing...';
+              const res = await fetch('/api/transcribe', { method: 'POST', body: blob });
+              const result = await res.json();
+              if (result.text) {
+                userInput.value = result.text;
+                setTimeout(() => chatForm.dispatchEvent(new Event('submit')), 100);
+              } else if (result.error) {
+                console.error('Transcription error:', result.error);
+                micTooltip.textContent = 'Transcription failed';
+                setTimeout(() => { micTooltip.textContent = 'Click to speak'; }, 2000);
+              }
+            } catch (err) {
+              console.error('Failed to transcribe:', err);
+            }
+          };
+
+          mediaRecorder.start(500); // Emits data every 500ms
+        })
+        .catch(() => {
+          micTooltip.textContent = 'Microphone access denied';
+          setTimeout(() => { micTooltip.textContent = 'Click to speak'; }, 2000);
+        });
+    }
+
+    // Initialize Connection on Load
+    window.addEventListener('DOMContentLoaded', () => {
+      connectSSE();
+    });
+  </script>
+</body>
+</html>
