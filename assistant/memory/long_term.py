@@ -191,6 +191,11 @@ class LongTermMemory:
             return None
         return Preference(key=row["key"], value=row["value"])
 
+    def delete_preference(self, key: str) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM preferences WHERE key = ?", (key,))
+            return cursor.rowcount > 0
+
     def list_preferences(self) -> Iterable[Preference]:
         with self._connect() as conn:
             rows = conn.execute("SELECT key, value FROM preferences").fetchall()
@@ -264,6 +269,11 @@ class LongTermMemory:
             importance=row["importance"],
             last_accessed_at=row["last_accessed_at"],
         )
+
+    def delete_memory(self, name: str) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM named_memories WHERE name = ?", (name,))
+            return cursor.rowcount > 0
 
     def list_memories(self) -> list[NamedMemory]:
         with self._connect() as conn:
@@ -375,6 +385,44 @@ class LongTermMemory:
             )
             for row in rows
         ]
+
+    def delete_fact(self, subject: str, predicate: str, object_value: str) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM knowledge_facts WHERE lower(subject) = lower(?) "
+                "AND lower(predicate) = lower(?) AND lower(object) = lower(?)",
+                (subject, predicate, object_value),
+            )
+            return cursor.rowcount > 0
+
+    def delete_entity_facts(self, subject: str) -> int:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM knowledge_facts WHERE lower(subject) = lower(?)", (subject,)
+            )
+            return cursor.rowcount
+
+    def forget_everything(self) -> dict[str, int]:
+        with self._connect() as conn:
+            prefs = conn.execute("DELETE FROM preferences").rowcount
+            memories = conn.execute("DELETE FROM named_memories").rowcount
+            facts = conn.execute("DELETE FROM knowledge_facts").rowcount
+            if self._has_fts:
+                for table in ("preferences_fts", "memories_fts", "facts_fts"):
+                    conn.execute(f"DROP TABLE IF EXISTS {table}")
+                conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS preferences_fts USING fts5("
+                    "key, value, content='')"
+                )
+                conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5("
+                    "name, content, content='')"
+                )
+                conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5("
+                    "subject, predicate, object, content='')"
+                )
+        return {"preferences_deleted": prefs, "memories_deleted": memories, "facts_deleted": facts}
 
     def search_facts(self, query: str, limit: int = 8) -> list[KnowledgeFact]:
         if self._has_fts:

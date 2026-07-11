@@ -103,11 +103,16 @@ def get_tools() -> list[BaseTool]:
     return [
         StorePreferenceTool(),
         GetPreferenceTool(),
+        DeletePreferenceTool(),
         StoreMemoryTool(),
         RecallMemoryTool(),
+        DeleteMemoryTool(),
         StoreKnowledgeFactTool(),
         SearchPersonalKnowledgeTool(),
         GetEntityProfileTool(),
+        DeleteFactTool(),
+        DeleteEntityFactsTool(),
+        ForgetEverythingTool(),
     ]
 
 
@@ -190,4 +195,121 @@ class GetEntityProfileTool(BaseTool):
                 {"subject": fact.subject, "predicate": fact.predicate, "object": fact.object}
                 for fact in facts
             ],
+        }
+
+
+@dataclass
+class DeletePreferenceTool(BaseTool):
+    metadata: ToolMetadata = ToolMetadata(
+        name="delete_preference",
+        description="Delete a stored user preference by key.",
+        parameters={
+            "type": "object",
+            "properties": {"key": {"type": "string"}},
+            "required": ["key"],
+        },
+    )
+
+    def execute(self, arguments: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
+        key = arguments.get("key")
+        if not isinstance(key, str):
+            return {"success": False, "error": "Key is required."}
+        deleted = context.memory.delete_preference(key)
+        if not deleted:
+            return {"success": False, "error": "Preference not found."}
+        return {"success": True, "output": f"Preference '{key}' deleted."}
+
+
+@dataclass
+class DeleteMemoryTool(BaseTool):
+    metadata: ToolMetadata = ToolMetadata(
+        name="delete_memory",
+        description="Delete a named memory.",
+        parameters={
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+    )
+
+    def execute(self, arguments: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
+        name = arguments.get("name")
+        if not isinstance(name, str):
+            return {"success": False, "error": "Name is required."}
+        deleted = context.memory.delete_memory(name)
+        if not deleted:
+            return {"success": False, "error": "Memory not found."}
+        return {"success": True, "output": f"Memory '{name}' deleted."}
+
+
+@dataclass
+class DeleteFactTool(BaseTool):
+    metadata: ToolMetadata = ToolMetadata(
+        name="delete_fact",
+        description="Delete a specific knowledge fact by subject, predicate, and object.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "subject": {"type": "string"},
+                "predicate": {"type": "string"},
+                "object": {"type": "string"},
+            },
+            "required": ["subject", "predicate", "object"],
+        },
+    )
+
+    def execute(self, arguments: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
+        subject = arguments.get("subject")
+        predicate = arguments.get("predicate")
+        object_value = arguments.get("object")
+        if not all(isinstance(v, str) for v in (subject, predicate, object_value)):
+            return {"success": False, "error": "Subject, predicate, and object are required."}
+        deleted = context.memory.delete_fact(subject, predicate, object_value)
+        if not deleted:
+            return {"success": False, "error": "Fact not found."}
+        return {"success": True, "output": "Fact deleted."}
+
+
+@dataclass
+class DeleteEntityFactsTool(BaseTool):
+    metadata: ToolMetadata = ToolMetadata(
+        name="delete_entity_facts",
+        description="Delete all knowledge facts for a given entity (person, project, place, etc.).",
+        parameters={
+            "type": "object",
+            "properties": {"subject": {"type": "string"}},
+            "required": ["subject"],
+        },
+    )
+
+    def execute(self, arguments: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
+        subject = arguments.get("subject")
+        if not isinstance(subject, str):
+            return {"success": False, "error": "Subject is required."}
+        count = context.memory.delete_entity_facts(subject)
+        if count == 0:
+            return {"success": False, "error": "No facts found for that entity."}
+        return {"success": True, "output": f"Deleted {count} fact(s) for '{subject}'."}
+
+
+@dataclass
+class ForgetEverythingTool(BaseTool):
+    metadata: ToolMetadata = ToolMetadata(
+        name="forget_everything",
+        description="Wipe ALL stored memory: preferences, named memories, and knowledge facts. Use with caution.",
+        parameters={
+            "type": "object",
+            "properties": {},
+        },
+    )
+
+    def execute(self, arguments: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
+        result = context.memory.forget_everything()
+        return {
+            "success": True,
+            "output": (
+                f"Memory wiped: {result['preferences_deleted']} preferences, "
+                f"{result['memories_deleted']} memories, "
+                f"{result['facts_deleted']} facts deleted."
+            ),
         }

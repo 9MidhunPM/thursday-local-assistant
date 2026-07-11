@@ -202,7 +202,11 @@ class Agent:
             f"response confirming the result to the user.\n"
             f"3. For playing single songs, use search_play. Do NOT use playlist tools.\n"
             f"4. You may call multiple independent tools in a single turn when it is more "
-            f"efficient to do so (e.g. fetching the time and system info together)."
+            f"efficient to do so (e.g. fetching the time and system info together).\n"
+            f"5. TOOL USAGE IS MANDATORY: Every user request to perform an action MUST result in a "
+            f"tool call. Even if you just fetched data, even if it's in memory, even if the answer "
+            f"is obvious - use the tool. The user expects the tool to execute, not a text response "
+            f"claiming it was done."
         )
 
     def _get_dynamic_context(self, user_text: str) -> str | None:
