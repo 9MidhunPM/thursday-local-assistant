@@ -13,7 +13,7 @@ from assistant.tools.base import BaseTool, ToolMetadata
 class WindowManagementTool(BaseTool):
     metadata: ToolMetadata = ToolMetadata(
         name="window_management",
-        description="List open windows or focus a specific window by name (Requires X11/wmctrl).",
+        description="List open windows or focus a window by name.",
         parameters={
             "type": "object",
             "properties": {

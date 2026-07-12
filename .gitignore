@@ -86,7 +86,8 @@ mysql/
 
 # Node / frontend build artifacts
 node_modules/
-assistant/web/dist/
+# Keep assistant/web/dist committed so clones work without Node.
+# Rebuild with: cd assistant/web && npm run build
 *.tsbuildinfo
 
 # Thursday runtime data (logs, memory db)

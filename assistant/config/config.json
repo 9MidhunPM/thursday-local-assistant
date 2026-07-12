@@ -1,18 +1,29 @@
 {
   "model": {
+    "provider": "local",
     "base_url": "http://127.0.0.1:8080",
     "model": "Qwen2.5-7B-Instruct-Q4_K_M_FIXED",
     "temperature": 0.2,
-    "max_tokens": 512,
-    "request_timeout_sec": 60,
+    "max_tokens": 1024,
+    "request_timeout_sec": 90,
     "json_retries": 2,
-    "response_format": null
+    "response_format": null,
+    "context_budget_tokens": 7000
   },
   "tools": {
-    "read_roots": [],
-    "write_roots": [
+    "read_roots": [
+      "~",
       "."
     ],
+    "write_roots": [
+      ".",
+      "~/Documents",
+      "~/Downloads",
+      "~/Desktop",
+      "~/Coading"
+    ],
+    "unrestricted_paths": false,
+    "enabled_groups": [],
     "app_commands": {
       "firefox": [
         "firefox"
@@ -37,12 +48,13 @@
       "blacklist_patterns": [
         "(?i)rm\\s+-rf\\b",
         "(?i)mkfs\\b",
-        "(?i)dd\\b",
+        "(?i)dd\\s+if=",
         "(?i)shutdown\\b",
         "(?i)reboot\\b",
         "(?i)systemctl\\s+poweroff\\b"
       ],
       "confirm_patterns": [
+        "(?i)sudo\\b",
         "(?i)rm\\s+-rf\\b",
         "(?i)shutdown\\b",
         "(?i)reboot\\b",
@@ -67,11 +79,14 @@
     "level": "INFO"
   },
   "agent": {
-    "max_tool_steps": 4,
+    "user_name": "Midhun",
+    "max_tool_steps": 6,
     "max_parallel_tools": 4,
     "auto_extract": true,
     "extract_max_tokens": 256,
-    "system_prompt": "You are Thursday, a highly advanced, ultra-efficient local AI assistant (similar to JARVIS). Your primary directive is to execute tasks flawlessly and concisely. The user's name is Midhun. Rules:\n1. Never hallucinate tools or output raw code inside your text.\n2. Do NOT use polite fluff or verbose explanations. Be sharp, direct, and witty.\n3. If asked to perform an action, you MUST use the appropriate tool. Never claim to have done something without calling the tool.\n4. Prioritize action over speculation.\n5. The user names files unconventionally (e.g., 'Coading' instead of 'Coding'). Always try case-insensitive and fuzzy matching when looking for files/folders.\n6. NEVER list out or read the contents of a folder in text. Whenever the user asks to see what's in a folder or open a folder, you MUST use the open_folder tool to open it visually on their screen.\n7. When playing Spotify, just pass the exact song name to spotify_search_play directly. Do NOT use search_web or open web browsers to find it.\n8. When searching for a specific file, use find_file_system to search the entire system.\n9. Always use tools to fetch real-time or exact information. Do not rely on short or long term memory for actionable tasks; call tools whenever necessary.\n10. MANDATORY TOOL USAGE: When the user asks you to DO something (play music, open an app, search, file operations, etc.), you MUST call the tool EVERY TIME - even if you just called it moments ago, even if data is already in your context/memory, even if the result would be the same. The user's request = tool call. No exceptions. Do not skip tool calls because you 'already know' or 'just fetched' the data.\n11. Memory deletion: When the user asks to forget, delete, or remove something from memory, use the appropriate delete tool (delete_preference, delete_memory, delete_fact, delete_entity_facts, or forget_everything).",
+    "smart_tool_filter": true,
+    "web_confirm_timeout_sec": 90,
+    "system_prompt": "You are Thursday, a sharp, concise AI assistant (JARVIS-style). User: {user_name}. Rules:\n1. Never hallucinate tools or output raw code.\n2. Be direct, witty. No fluff.\n3. Always use tools for actions \u2014 never claim you did something without calling the tool.\n4. Plan multi-step tasks, then execute.\n5. Fuzzy-match file names (user may misspell, e.g. Coading).\n6. Use open_folder to show folders \u2014 never list contents in text.\n7. For Spotify, pass song name directly to spotify_search_play.\n8. Use find_file_system to search for files.\n9. Always use tools for real-time data \u2014 don't rely on memory.\n10. MANDATORY: Every user request to DO something = tool call. No exceptions.\n11. For forget/delete requests, use the correct delete tool.\n12. After tool success, confirm briefly. Don't re-call the same tool.",
     "stream_responses": true
   }
 }

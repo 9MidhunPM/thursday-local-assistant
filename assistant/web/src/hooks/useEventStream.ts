@@ -10,6 +10,8 @@ interface Options {
   onInitConversation: (id: number | null) => void
   onConversationUpdated: (id: number, title: string) => void
   onConversationDeleted: (id: number) => void
+  onConfirmRequired?: (data: { id: string; prompt: string; timeout_sec?: number }) => void
+  onConfirmResolved?: (data: { id: string; approved: boolean }) => void
 }
 
 export function useEventStream({
@@ -20,6 +22,8 @@ export function useEventStream({
   onInitConversation,
   onConversationUpdated,
   onConversationDeleted,
+  onConfirmRequired,
+  onConfirmResolved,
 }: Options) {
   const sourceRef = useRef<EventSource | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -34,6 +38,8 @@ export function useEventStream({
     onInitConversation,
     onConversationUpdated,
     onConversationDeleted,
+    onConfirmRequired,
+    onConfirmResolved,
   })
   cb.current = {
     dispatch,
@@ -43,6 +49,8 @@ export function useEventStream({
     onInitConversation,
     onConversationUpdated,
     onConversationDeleted,
+    onConfirmRequired,
+    onConfirmResolved,
   }
 
   useEffect(() => {
@@ -58,6 +66,8 @@ export function useEventStream({
         onInitConversation: initConv,
         onConversationUpdated: convUpd,
         onConversationDeleted: convDel,
+        onConfirmRequired: confReq,
+        onConfirmResolved: confRes,
       } = cb.current
       switch (event.type) {
         case 'init':
@@ -112,6 +122,12 @@ export function useEventStream({
           break
         case 'conversation_deleted':
           convDel(event.data.id)
+          break
+        case 'confirm_required':
+          confReq?.(event.data)
+          break
+        case 'confirm_resolved':
+          confRes?.(event.data)
           break
         case 'shutdown':
           d({ type: 'SET_STATUS', status: 'reconnecting' })

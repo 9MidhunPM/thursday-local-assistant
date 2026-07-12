@@ -113,6 +113,7 @@ def get_tools() -> list[BaseTool]:
         DeleteFactTool(),
         DeleteEntityFactsTool(),
         ForgetEverythingTool(),
+        ListAllMemoryTool(),
     ]
 
 
@@ -120,7 +121,7 @@ def get_tools() -> list[BaseTool]:
 class StoreKnowledgeFactTool(BaseTool):
     metadata: ToolMetadata = ToolMetadata(
         name="store_fact",
-        description="Store a personal knowledge graph fact such as person, project, preference, or relationship data.",
+        description="Store a knowledge graph fact (subject-predicate-object).",
         parameters={
             "type": "object",
             "properties": {
@@ -151,7 +152,7 @@ class StoreKnowledgeFactTool(BaseTool):
 class SearchPersonalKnowledgeTool(BaseTool):
     metadata: ToolMetadata = ToolMetadata(
         name="search_personal_knowledge",
-        description="Search preferences, saved memories, and knowledge graph facts relevant to a topic.",
+        description="Search stored preferences, memories, and knowledge facts.",
         parameters={
             "type": "object",
             "properties": {
@@ -296,7 +297,7 @@ class DeleteEntityFactsTool(BaseTool):
 class ForgetEverythingTool(BaseTool):
     metadata: ToolMetadata = ToolMetadata(
         name="forget_everything",
-        description="Wipe ALL stored memory: preferences, named memories, and knowledge facts. Use with caution.",
+        description="Wipe ALL stored memory. Use with caution.",
         parameters={
             "type": "object",
             "properties": {},
@@ -312,4 +313,44 @@ class ForgetEverythingTool(BaseTool):
                 f"{result['memories_deleted']} memories, "
                 f"{result['facts_deleted']} facts deleted."
             ),
+        }
+
+
+@dataclass
+class ListAllMemoryTool(BaseTool):
+    metadata: ToolMetadata = ToolMetadata(
+        name="list_all_memory",
+        description="Retrieve every stored long-term memory: all preferences, named memories, and knowledge facts.",
+        parameters={
+            "type": "object",
+            "properties": {},
+        },
+    )
+
+    def execute(self, arguments: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
+        preferences = [
+            {"key": pref.key, "value": pref.value}
+            for pref in context.memory.list_preferences()
+        ]
+        memories = [
+            {"name": m.name, "content": m.content, "importance": m.importance}
+            for m in context.memory.list_memories()
+        ]
+        facts = [
+            {"subject": f.subject, "predicate": f.predicate, "object": f.object, "importance": f.importance}
+            for f in context.memory.list_facts()
+        ]
+        return {
+            "success": True,
+            "output": {
+                "preferences": preferences,
+                "named_memories": memories,
+                "knowledge_facts": facts,
+                "summary": {
+                    "total_preferences": len(preferences),
+                    "total_memories": len(memories),
+                    "total_facts": len(facts),
+                    "total_items": len(preferences) + len(memories) + len(facts),
+                },
+            },
         }

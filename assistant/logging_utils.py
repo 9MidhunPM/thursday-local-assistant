@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 from dataclasses import dataclass
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
+
+from assistant.security import redact_secrets
 
 
 @dataclass(frozen=True)
@@ -27,15 +29,33 @@ class StructuredFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
-        # Add extra fields
         for key, value in record.__dict__.items():
             if key not in {
-                "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
-                "module", "lineno", "funcName", "created", "msecs", "relativeCreated",
-                "thread", "threadName", "processName", "process", "exc_info", "exc_text",
-                "stack_info", "getMessage", "message", "asctime"
+                "name",
+                "msg",
+                "args",
+                "levelname",
+                "levelno",
+                "pathname",
+                "filename",
+                "module",
+                "lineno",
+                "funcName",
+                "created",
+                "msecs",
+                "relativeCreated",
+                "thread",
+                "threadName",
+                "processName",
+                "process",
+                "exc_info",
+                "exc_text",
+                "stack_info",
+                "getMessage",
+                "message",
+                "asctime",
             }:
-                log_data[key] = value
+                log_data[key] = redact_secrets(value)
 
         if record.exc_info:
             log_data["exception"] = self.formatException(record.exc_info)
@@ -50,7 +70,12 @@ def _build_logger(name: str, level: int, log_file: Path, structured: bool = Fals
     if logger.handlers:
         return logger
 
-    handler = logging.FileHandler(log_file, encoding="utf-8")
+    handler = RotatingFileHandler(
+        log_file,
+        encoding="utf-8",
+        maxBytes=5 * 1024 * 1024,
+        backupCount=3,
+    )
     if structured:
         formatter = StructuredFormatter(datefmt="%Y-%m-%dT%H:%M:%S")
     else:
@@ -76,7 +101,6 @@ def setup_logging(directory: Path, level: str, structured: bool = False) -> Logg
     )
 
 
-# Structured logging helpers
 def log_model_interaction(
     logger: logging.Logger,
     user_text: str,
@@ -84,11 +108,11 @@ def log_model_interaction(
     tool_calls: list[dict[str, Any]] | None = None,
 ) -> None:
     """Log model interaction with structured data."""
-    extra = {"user_text": user_text}
+    extra: dict[str, Any] = {"user_text": user_text}
     if response:
         extra["response"] = response
     if tool_calls:
-        extra["tool_calls"] = tool_calls
+        extra["tool_calls"] = redact_secrets(tool_calls)
     logger.info("model_interaction", extra=extra)
 
 
@@ -97,8 +121,11 @@ def log_tool_call(
     tool_name: str,
     arguments: dict[str, Any],
 ) -> None:
-    """Log tool invocation with structured data."""
-    logger.info("tool_call", extra={"tool": tool_name, "arguments": arguments})
+    """Log tool invocation with secrets redacted."""
+    logger.info(
+        "tool_call",
+        extra={"tool": tool_name, "arguments": redact_secrets(arguments)},
+    )
 
 
 def log_tool_result(
@@ -109,7 +136,7 @@ def log_tool_result(
     error: str | None = None,
 ) -> None:
     """Log tool result with structured data."""
-    extra = {"tool": tool_name, "success": success}
+    extra: dict[str, Any] = {"tool": tool_name, "success": success}
     if result:
         extra["result_keys"] = list(result.keys())
     if error:
@@ -126,10 +153,10 @@ def log_error(
     context: dict[str, Any] | None = None,
 ) -> None:
     """Log error with structured context."""
-    extra = {"message": message}
+    extra: dict[str, Any] = {"message": message}
     if error:
         extra["error_type"] = type(error).__name__
         extra["error_message"] = str(error)
     if context:
-        extra["context"] = context
+        extra["context"] = redact_secrets(context)
     logger.error("error", extra=extra)

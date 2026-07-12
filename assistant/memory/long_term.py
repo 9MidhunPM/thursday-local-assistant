@@ -485,6 +485,23 @@ class LongTermMemory:
             for row in ranked[:limit]
         ]
 
+    def list_facts(self) -> list[KnowledgeFact]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT subject, predicate, object, importance, last_accessed_at "
+                "FROM knowledge_facts ORDER BY updated_at DESC"
+            ).fetchall()
+        return [
+            KnowledgeFact(
+                subject=row["subject"],
+                predicate=row["predicate"],
+                object=row["object"],
+                importance=row["importance"],
+                last_accessed_at=row["last_accessed_at"],
+            )
+            for row in rows
+        ]
+
     # ---------------- shared helpers ----------------
 
     @staticmethod

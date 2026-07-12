@@ -25,7 +25,7 @@ class SearchResult:
 class WebSearchTool(BaseTool):
     metadata = ToolMetadata(
         name="web_search",
-        description="Search the web using a configured search API (Google Custom Search, generic bearer-token API) with fallback to DuckDuckGo and return top results with title, URL, and snippet. Use for finding current information, news, facts, etc.",
+        description="Search the web and return results with title, URL, and snippet.",
         parameters={
             "type": "object",
             "properties": {
@@ -459,7 +459,7 @@ class WebSearchTool(BaseTool):
 class FetchPageTool(BaseTool):
     metadata = ToolMetadata(
         name="fetch_page",
-        description="Fetch and extract readable content from a web page URL. Returns clean text content, title, and metadata.",
+        description="Fetch and extract readable text content from a web page URL.",
         parameters={
             "type": "object",
             "properties": {
@@ -648,4 +648,4 @@ class SearchAndFetchTool(BaseTool):
 
 
 def get_tools(config: Any | None = None) -> list[BaseTool]:
-    return [WebSearchTool(), FetchPageTool(), SearchAndFetchTool()]
+    return [WebSearchTool(), FetchPageTool()]

@@ -30,7 +30,7 @@ class ToolRegistry:
         registry = cls()
         package = importlib.import_module("assistant.tools")
         for module_info in pkgutil.iter_modules(package.__path__):
-            if module_info.name in {"base", "registry", "__init__"}:
+            if module_info.name in {"base", "registry", "__init__", "groups"}:
                 continue
             module = importlib.import_module(f"assistant.tools.{module_info.name}")
             if hasattr(module, "get_tools"):

@@ -5,6 +5,7 @@ import Composer from '@/components/Composer'
 import LogsModal from '@/components/LogsModal'
 import VoiceVisualizer from '@/components/VoiceVisualizer'
 import Sidebar from '@/components/Sidebar'
+import ConfirmBanner, { type ConfirmRequest } from '@/components/ConfirmBanner'
 import { useAudioEngine } from '@/hooks/useAudioEngine'
 import { useEventStream } from '@/hooks/useEventStream'
 import { useConversations } from '@/hooks/useConversations'
@@ -17,6 +18,7 @@ export default function App() {
   const [state, dispatch] = useReducer(chatReducer, initialState)
   const [showLogs, setShowLogs] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null)
   const [ttsEnabled, setTtsEnabled] = useState<boolean>(() => {
     try {
       return localStorage.getItem(TTS_STORAGE_KEY) === 'true'
@@ -48,6 +50,8 @@ export default function App() {
     onConversationDeleted: () => {
       void conversations.refresh()
     },
+    onConfirmRequired: (data) => setConfirmReq(data),
+    onConfirmResolved: () => setConfirmReq(null),
   })
 
   const handleToggleTts = useCallback((enabled: boolean) => {
@@ -145,6 +149,7 @@ export default function App() {
         onDelete={conversations.remove}
       />
       <LogsModal visible={showLogs} logs={state.logs} onClose={() => setShowLogs(false)} />
+      <ConfirmBanner request={confirmReq} onResolved={() => setConfirmReq(null)} />
     </>
   )
 }

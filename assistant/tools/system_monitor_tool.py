@@ -9,14 +9,14 @@ import time
 from typing import Any
 
 from assistant.tools.base import BaseTool, ToolMetadata
-from .system_tools import SystemInfoTool
+from .system_tools import SystemStatusTool
 
 
 class SystemMonitorTool(BaseTool):
     """Tool to get detailed system monitoring information."""
     metadata = ToolMetadata(
         name="system_monitor",
-        description="Get detailed system information including CPU, memory, disk, network, and battery status.",
+        description="Get detailed system info: CPU, memory, disk, network, battery.",
         parameters={
             "type": "object",
             "properties": {
@@ -32,7 +32,7 @@ class SystemMonitorTool(BaseTool):
     )
 
     def __init__(self):
-        self.system_tool = SystemInfoTool()
+        self.system_tool = SystemStatusTool()
 
     def execute(self, arguments: dict[str, Any], context: Any) -> dict[str, Any]:
         detail_level = arguments.get("detail_level", "basic")

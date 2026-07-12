@@ -8,11 +8,10 @@ from dotenv import load_dotenv
 from .agent.agent import Agent, AgentConfig
 from .config import AppConfig, load_config
 from .logging_utils import Loggers, setup_logging
-from .llm.client import LlamaCppClient
+from .llm.client import LlamaCppClient, build_llm_client
 from .memory.conversation_store import ConversationStore
 from .memory.long_term import LongTermMemory
 from .memory.session import SessionMemory
-from .memory.short_term import ShortTermMemory
 from .tools.registry import ToolRegistry
 from .voice.stt import SpeechToText
 from .voice.tts import TextToSpeech
@@ -34,7 +33,8 @@ def _build_tts(config: AppConfig) -> TextToSpeech | None:
         )
     except (FileNotFoundError, ImportError) as e:
         import logging
-        logging.getLogger("assistant").warning(f"TTS unavailable: {e}")
+
+        logging.getLogger("assistant").warning("TTS unavailable: %s", e)
         return None
 
 
@@ -50,7 +50,8 @@ def _build_stt(config: AppConfig) -> SpeechToText | None:
         )
     except (ImportError, OSError) as e:
         import logging
-        logging.getLogger("assistant").warning(f"STT unavailable: {e}")
+
+        logging.getLogger("assistant").warning("STT unavailable: %s", e)
         return None
 
 
@@ -60,13 +61,14 @@ class AssistantRuntime:
     config: AppConfig
     loggers: Loggers
     conversation_store: ConversationStore
+    llm: LlamaCppClient
     tts: TextToSpeech | None = None
     stt: SpeechToText | None = None
 
     def shutdown(self) -> None:
         """Gracefully shutdown the runtime components."""
-        if hasattr(self.agent, '_llm') and self.agent._llm:
-            self.agent._llm.close()
+        if self.llm:
+            self.llm.close()
         if self.tts:
             self.tts.stop()
 
@@ -79,18 +81,24 @@ def build_runtime(config_path: Path | None = None) -> AssistantRuntime:
     config = load_config(resolved_config_path)
     loggers = setup_logging(Path(config.logging.directory), config.logging.level)
 
-    llm = LlamaCppClient(
+    llm = build_llm_client(
         base_url=config.model.base_url,
         model=config.model.model,
         temperature=config.model.temperature,
         max_tokens=config.model.max_tokens,
         timeout_sec=config.model.request_timeout_sec,
         response_format=config.model.response_format,
+        provider=config.model.provider,
+        api_key=config.model.api_key,
     )
+
+    # Session budget scales with model context
+    session_tokens = min(4000, max(600, config.model.context_budget_tokens // 8))
+
     tool_registry = ToolRegistry.load_builtin(config.tools)
     memory = LongTermMemory(Path(config.memory.db_path))
     conversation_store = ConversationStore(Path(config.memory.db_path))
-    short_term = SessionMemory(conversation_store, max_tokens=800)
+    short_term = SessionMemory(conversation_store, max_tokens=session_tokens)
     agent = Agent(
         llm=llm,
         tool_registry=tool_registry,
@@ -105,15 +113,32 @@ def build_runtime(config_path: Path | None = None) -> AssistantRuntime:
             max_parallel_tools=config.agent.max_parallel_tools,
             auto_extract=config.agent.auto_extract,
             extract_max_tokens=config.agent.extract_max_tokens,
+            context_budget_tokens=config.model.context_budget_tokens,
+            smart_tool_filter=config.agent.smart_tool_filter,
+            enabled_tool_groups=tuple(config.tools.enabled_groups),
+            web_confirm_timeout_sec=config.agent.web_confirm_timeout_sec,
+            user_name=config.agent.user_name,
         ),
     )
     tts = _build_tts(config)
     stt = _build_stt(config)
+
+    mode = "local" if llm.is_local else f"api:{llm.provider}"
+    loggers.model.info(
+        "runtime_ready provider=%s model=%s base_url=%s mode=%s tools=%s",
+        llm.provider,
+        llm.model,
+        llm.base_url,
+        mode,
+        len(list(tool_registry.tools())),
+    )
+
     return AssistantRuntime(
         agent=agent,
         config=config,
         loggers=loggers,
         conversation_store=conversation_store,
+        llm=llm,
         tts=tts,
         stt=stt,
     )

@@ -49,8 +49,10 @@ class SmokeTests(unittest.TestCase):
             "spotify_library",
             "spotify_play_playlist",
             "speak_text",
+            "gmail_read",
         }
-        self.assertTrue(expected.issubset(tool_names))
+        missing = expected - tool_names
+        self.assertFalse(missing, f"Missing tools: {missing}")
 
     def test_long_term_memory_roundtrip(self) -> None:
         with TemporaryDirectory() as tmpdir:

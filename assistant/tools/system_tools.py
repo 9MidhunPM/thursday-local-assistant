@@ -78,62 +78,46 @@ class CurrentDateTool(BaseTool):
 
 
 @dataclass
-class SystemInfoTool(BaseTool):
+class SystemStatusTool(BaseTool):
     metadata: ToolMetadata = ToolMetadata(
-        name="system_info",
-        description="Get basic system information.",
-        parameters={"type": "object", "properties": {}},
+        name="system_status",
+        description="Get system info: OS, CPU usage, memory usage, and battery status.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "section": {
+                    "type": "string",
+                    "enum": ["all", "system", "cpu", "memory", "battery"],
+                    "description": "Which info to return. Default: all.",
+                }
+            },
+        },
     )
 
     def execute(self, arguments: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
-        info = platform.uname()
-        return {
-            "success": True,
-            "output": {
-                "system": info.system,
-                "node": info.node,
+        section = arguments.get("section", "all")
+        result: dict[str, Any] = {}
+
+        if section in ("all", "system"):
+            info = platform.uname()
+            result["system"] = {
+                "os": info.system,
+                "hostname": info.node,
                 "release": info.release,
-                "version": info.version,
                 "machine": info.machine,
                 "processor": info.processor,
-            },
-        }
+            }
 
+        if section in ("all", "cpu"):
+            result["cpu"] = _read_cpu_usage()
 
-@dataclass
-class BatteryInfoTool(BaseTool):
-    metadata: ToolMetadata = ToolMetadata(
-        name="battery_info",
-        description="Get battery status and capacity.",
-        parameters={"type": "object", "properties": {}},
-    )
+        if section in ("all", "memory"):
+            result["memory"] = _read_meminfo()
 
-    def execute(self, arguments: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
-        return {"success": True, "output": _read_battery_info()}
+        if section in ("all", "battery"):
+            result["battery"] = _read_battery_info()
 
-
-@dataclass
-class MemoryUsageTool(BaseTool):
-    metadata: ToolMetadata = ToolMetadata(
-        name="memory_usage",
-        description="Get memory usage from /proc/meminfo.",
-        parameters={"type": "object", "properties": {}},
-    )
-
-    def execute(self, arguments: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
-        return {"success": True, "output": _read_meminfo()}
-
-
-@dataclass
-class CpuUsageTool(BaseTool):
-    metadata: ToolMetadata = ToolMetadata(
-        name="cpu_usage",
-        description="Get CPU usage percentage.",
-        parameters={"type": "object", "properties": {}},
-    )
-
-    def execute(self, arguments: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
-        return {"success": True, "output": _read_cpu_usage()}
+        return {"success": True, "output": result}
 
 
 @dataclass
@@ -223,10 +207,7 @@ def get_tools() -> list[BaseTool]:
     return [
         CurrentTimeTool(),
         CurrentDateTool(),
-        SystemInfoTool(),
-        BatteryInfoTool(),
-        MemoryUsageTool(),
-        CpuUsageTool(),
+        SystemStatusTool(),
         ScreenshotTool(),
         ProcessKillerTool(),
     ]

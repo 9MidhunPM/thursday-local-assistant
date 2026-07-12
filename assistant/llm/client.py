@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable
+from urllib.parse import urlparse
 
 import httpx
 
@@ -27,13 +29,14 @@ class ToolCall:
 @dataclass(frozen=True)
 class InferenceStats:
     """Performance metrics for a single inference request."""
+
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
     time_to_first_token: float | None = None  # seconds
     tokens_per_second: float | None = None
     total_time: float = 0.0
-    backend: str = "llama.cpp"
+    backend: str = "openai-compatible"
 
 
 @dataclass(frozen=True)
@@ -44,6 +47,51 @@ class LlmResponse:
     stats: InferenceStats
 
 
+# Provider presets: base_url, default model, auth header style.
+PROVIDER_PRESETS: dict[str, dict[str, str]] = {
+    "local": {
+        "base_url": "http://127.0.0.1:8080",
+        "model": "local-model",
+        "api_key_env": "",
+    },
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+        "api_key_env": "OPENAI_API_KEY",
+    },
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "model": "openai/gpt-4o-mini",
+        "api_key_env": "OPENROUTER_API_KEY",
+    },
+    "groq": {
+        "base_url": "https://api.groq.com/openai/v1",
+        "model": "llama-3.3-70b-versatile",
+        "api_key_env": "GROQ_API_KEY",
+    },
+    "together": {
+        "base_url": "https://api.together.xyz/v1",
+        "model": "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+        "api_key_env": "TOGETHER_API_KEY",
+    },
+    "deepseek": {
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+        "api_key_env": "DEEPSEEK_API_KEY",
+    },
+    "mistral": {
+        "base_url": "https://api.mistral.ai/v1",
+        "model": "mistral-small-latest",
+        "api_key_env": "MISTRAL_API_KEY",
+    },
+    "custom": {
+        "base_url": "http://127.0.0.1:8080",
+        "model": "custom-model",
+        "api_key_env": "LLM_API_KEY",
+    },
+}
+
+
 def _tc_field(tc: Any, field: str, default: Any = None) -> Any:
     """Read a field from a tool call that may be a ToolCall object or a dict."""
     if isinstance(tc, dict):
@@ -51,7 +99,86 @@ def _tc_field(tc: Any, field: str, default: Any = None) -> Any:
     return getattr(tc, field, default)
 
 
-class LlamaCppClient:
+def resolve_provider_settings(
+    provider: str | None = None,
+    base_url: str | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
+) -> dict[str, Any]:
+    """Resolve LLM provider from env + explicit overrides.
+
+    Priority:
+      1. Explicit function args
+      2. Env: LLM_PROVIDER / LLM_BASE_URL / LLM_MODEL / LLM_API_KEY (+ provider keys)
+      3. Local llama via LLAMA_HOST / LLAMA_PORT when provider is local
+    """
+    raw_provider = (provider or os.getenv("LLM_PROVIDER") or "local").strip().lower()
+    if raw_provider in {"llama", "llamacpp", "llama.cpp"}:
+        raw_provider = "local"
+
+    preset = PROVIDER_PRESETS.get(raw_provider, PROVIDER_PRESETS["custom"])
+    resolved_provider = raw_provider if raw_provider in PROVIDER_PRESETS else "custom"
+
+    # Base URL
+    env_base = os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+    if base_url:
+        resolved_url = base_url.rstrip("/")
+    elif env_base:
+        resolved_url = env_base.rstrip("/")
+    elif resolved_provider == "local":
+        host = os.getenv("LLAMA_HOST", "127.0.0.1")
+        port = os.getenv("LLAMA_PORT", "8080")
+        resolved_url = f"http://{host}:{port}"
+    else:
+        resolved_url = preset["base_url"].rstrip("/")
+
+    # Ensure .../v1 for known cloud APIs if user passed host only
+    if resolved_provider != "local" and not resolved_url.rstrip("/").endswith("/v1"):
+        # Local llama.cpp often uses /v1/chat/completions on the root server.
+        # Cloud OpenAI-compat usually expects /v1.
+        if "localhost" not in resolved_url and "127.0.0.1" not in resolved_url:
+            if "/api/v1" not in resolved_url:
+                resolved_url = resolved_url.rstrip("/") + "/v1"
+
+    # Model
+    resolved_model = (
+        model
+        or os.getenv("LLM_MODEL")
+        or os.getenv("OPENAI_MODEL")
+        or preset["model"]
+    )
+
+    # API key
+    key_env = preset.get("api_key_env") or "LLM_API_KEY"
+    resolved_key = (
+        api_key
+        or os.getenv("LLM_API_KEY")
+        or (os.getenv(key_env) if key_env else None)
+        or os.getenv("OPENAI_API_KEY")
+        or ""
+    )
+
+    is_local = resolved_provider == "local" or _is_loopback_url(resolved_url)
+    return {
+        "provider": resolved_provider,
+        "base_url": resolved_url,
+        "model": resolved_model,
+        "api_key": resolved_key,
+        "is_local": is_local,
+    }
+
+
+def _is_loopback_url(url: str) -> bool:
+    try:
+        host = urlparse(url).hostname or ""
+    except Exception:
+        return False
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+class OpenAICompatibleClient:
+    """OpenAI-compatible chat client (local llama.cpp, OpenAI, OpenRouter, Groq, …)."""
+
     def __init__(
         self,
         base_url: str,
@@ -60,8 +187,11 @@ class LlamaCppClient:
         max_tokens: int | None,
         timeout_sec: int,
         response_format: str | None,
+        api_key: str | None = None,
+        provider: str = "local",
         max_connections: int = 10,
         max_keepalive_connections: int = 5,
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._model = model
@@ -69,24 +199,55 @@ class LlamaCppClient:
         self._max_tokens = max_tokens
         self._timeout_sec = timeout_sec
         self._response_format = response_format
+        self._api_key = (api_key or "").strip()
+        self._provider = provider
+        self._backend_name = provider if provider != "local" else "llama.cpp"
 
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        if provider == "openrouter":
+            headers.setdefault("HTTP-Referer", "https://github.com/thursday-ai/thursday")
+            headers.setdefault("X-Title", "Thursday AI Assistant")
+        if extra_headers:
+            headers.update(extra_headers)
+
+        self._headers = headers
         self._client = httpx.Client(
-            timeout=httpx.Timeout(timeout_sec, connect=5.0),
+            timeout=httpx.Timeout(timeout_sec, connect=10.0),
             limits=httpx.Limits(
                 max_connections=max_connections,
                 max_keepalive_connections=max_keepalive_connections,
             ),
+            headers=headers,
         )
         self._async_client: httpx.AsyncClient | None = None
+
+    @property
+    def provider(self) -> str:
+        return self._provider
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def base_url(self) -> str:
+        return self._base_url
+
+    @property
+    def is_local(self) -> bool:
+        return self._provider == "local" or _is_loopback_url(self._base_url)
 
     def _get_async_client(self) -> httpx.AsyncClient:
         if self._async_client is None or self._async_client.is_closed:
             self._async_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self._timeout_sec, connect=5.0),
+                timeout=httpx.Timeout(self._timeout_sec, connect=10.0),
                 limits=httpx.Limits(
                     max_connections=10,
                     max_keepalive_connections=5,
                 ),
+                headers=self._headers,
             )
         return self._async_client
 
@@ -94,18 +255,23 @@ class LlamaCppClient:
         self._client.close()
         if self._async_client and not self._async_client.is_closed:
             import asyncio
+
             try:
-                asyncio.get_event_loop().run_until_complete(self._async_client.aclose())
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(self._async_client.aclose())
+                else:
+                    loop.run_until_complete(self._async_client.aclose())
             except RuntimeError:
                 pass
 
-    def __enter__(self) -> "LlamaCppClient":
+    def __enter__(self) -> OpenAICompatibleClient:
         return self
 
     def __exit__(self, *args: Any) -> None:
         self.close()
 
-    async def __aenter__(self) -> "LlamaCppClient":
+    async def __aenter__(self) -> OpenAICompatibleClient:
         return self
 
     async def __aexit__(self, *args: Any) -> None:
@@ -115,6 +281,12 @@ class LlamaCppClient:
         self._client.close()
         if self._async_client and not self._async_client.is_closed:
             await self._async_client.aclose()
+
+    def _chat_url(self) -> str:
+        base = self._base_url.rstrip("/")
+        if base.endswith("/v1"):
+            return f"{base}/chat/completions"
+        return f"{base}/v1/chat/completions"
 
     def _build_payload(
         self,
@@ -159,7 +331,11 @@ class LlamaCppClient:
             "stream": stream,
         }
         if self._max_tokens is not None:
-            payload["max_tokens"] = self._max_tokens
+            # Newer OpenAI models prefer max_completion_tokens; most others use max_tokens.
+            if self._provider == "openai" and str(self._model).startswith("o"):
+                payload["max_completion_tokens"] = self._max_tokens
+            else:
+                payload["max_tokens"] = self._max_tokens
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
@@ -189,13 +365,14 @@ class LlamaCppClient:
                 )
             )
         usage = raw.get("usage", {})
+        completion = usage.get("completion_tokens", 0)
         stats = InferenceStats(
             prompt_tokens=usage.get("prompt_tokens", 0),
-            completion_tokens=usage.get("completion_tokens", 0),
+            completion_tokens=completion,
             total_tokens=usage.get("total_tokens", 0),
             total_time=elapsed,
-            tokens_per_second=usage.get("completion_tokens", 0) / elapsed if elapsed > 0 else 0,
-            backend="llama.cpp",
+            tokens_per_second=completion / elapsed if elapsed > 0 and completion else 0,
+            backend=self._backend_name,
         )
         return LlmResponse(content=content, tool_calls=tool_calls, raw=raw, stats=stats)
 
@@ -207,14 +384,10 @@ class LlamaCppClient:
     ) -> LlmResponse:
         payload = self._build_payload(messages, tools, use_response_format)
         start = time.perf_counter()
-        response = self._client.post(
-            f"{self._base_url}/v1/chat/completions",
-            json=payload,
-        )
+        response = self._client.post(self._chat_url(), json=payload)
         response.raise_for_status()
         elapsed = time.perf_counter() - start
-        raw = response.json()
-        return self._parse_response(raw, elapsed)
+        return self._parse_response(response.json(), elapsed)
 
     def chat_stream(
         self,
@@ -232,11 +405,7 @@ class LlamaCppClient:
         first_token_time: float | None = None
         start = time.perf_counter()
 
-        with self._client.stream(
-            "POST",
-            f"{self._base_url}/v1/chat/completions",
-            json=payload,
-        ) as response:
+        with self._client.stream("POST", self._chat_url(), json=payload) as response:
             response.raise_for_status()
             for line in response.iter_lines():
                 if not line or not line.startswith("data:"):
@@ -289,7 +458,11 @@ class LlamaCppClient:
             except json.JSONDecodeError:
                 args = {}
             parsed_tool_calls.append(
-                ToolCall(id=entry.get("id", f"call_{index}"), name=entry["name"], arguments=args)
+                ToolCall(
+                    id=entry.get("id", f"call_{index}"),
+                    name=entry["name"],
+                    arguments=args,
+                )
             )
 
         stats = InferenceStats(
@@ -299,7 +472,7 @@ class LlamaCppClient:
             time_to_first_token=first_token_time,
             tokens_per_second=len(content_parts) / elapsed if elapsed > 0 else 0,
             total_time=elapsed,
-            backend="llama.cpp",
+            backend=self._backend_name,
         )
         return LlmResponse(content=content, tool_calls=parsed_tool_calls, raw={}, stats=stats)
 
@@ -312,14 +485,10 @@ class LlamaCppClient:
         payload = self._build_payload(messages, tools, use_response_format)
         client = self._get_async_client()
         start = time.perf_counter()
-        response = await client.post(
-            f"{self._base_url}/v1/chat/completions",
-            json=payload,
-        )
+        response = await client.post(self._chat_url(), json=payload)
         response.raise_for_status()
         elapsed = time.perf_counter() - start
-        raw = response.json()
-        return self._parse_response(raw, elapsed)
+        return self._parse_response(response.json(), elapsed)
 
     async def achat_stream(
         self,
@@ -338,11 +507,7 @@ class LlamaCppClient:
         start = time.perf_counter()
 
         client = self._get_async_client()
-        async with client.stream(
-            "POST",
-            f"{self._base_url}/v1/chat/completions",
-            json=payload,
-        ) as response:
+        async with client.stream("POST", self._chat_url(), json=payload) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
                 if not line or not line.startswith("data:"):
@@ -395,7 +560,11 @@ class LlamaCppClient:
             except json.JSONDecodeError:
                 args = {}
             parsed_tool_calls.append(
-                ToolCall(id=entry.get("id", f"call_{index}"), name=entry["name"], arguments=args)
+                ToolCall(
+                    id=entry.get("id", f"call_{index}"),
+                    name=entry["name"],
+                    arguments=args,
+                )
             )
 
         stats = InferenceStats(
@@ -405,13 +574,93 @@ class LlamaCppClient:
             time_to_first_token=first_token_time,
             tokens_per_second=len(content_parts) / elapsed if elapsed > 0 else 0,
             total_time=elapsed,
-            backend="llama.cpp",
+            backend=self._backend_name,
         )
         return LlmResponse(content=content, tool_calls=parsed_tool_calls, raw={}, stats=stats)
 
     def health_check(self) -> dict[str, Any]:
+        """Check backend readiness. Cloud providers are ready if a key is set."""
+        if not self.is_local:
+            if self._api_key:
+                return {
+                    "status": "healthy",
+                    "backend": self._backend_name,
+                    "model": self._model,
+                    "mode": "api",
+                }
+            return {
+                "status": "error",
+                "backend": self._backend_name,
+                "error": "API key missing",
+                "mode": "api",
+            }
         try:
-            resp = self._client.get(f"{self._base_url}/health", timeout=2.0)
-            return {"status": "healthy" if resp.status_code == 200 else "unhealthy", "backend": "llama.cpp"}
+            # llama.cpp exposes /health; some servers only have /v1/models
+            for path in ("/health", "/v1/models", "/models"):
+                try:
+                    resp = self._client.get(f"{self._base_url}{path}", timeout=2.0)
+                    if resp.status_code == 200:
+                        return {
+                            "status": "healthy",
+                            "backend": self._backend_name,
+                            "model": self._model,
+                            "mode": "local",
+                        }
+                except Exception:
+                    continue
+            return {
+                "status": "unhealthy",
+                "backend": self._backend_name,
+                "mode": "local",
+            }
         except Exception as e:
-            return {"status": "error", "backend": "llama.cpp", "error": str(e)}
+            return {
+                "status": "error",
+                "backend": self._backend_name,
+                "error": str(e),
+                "mode": "local",
+            }
+
+
+# Backward-compatible alias used throughout the codebase.
+LlamaCppClient = OpenAICompatibleClient
+
+
+def build_llm_client(
+    *,
+    base_url: str,
+    model: str,
+    temperature: float,
+    max_tokens: int | None,
+    timeout_sec: int,
+    response_format: str | None,
+    provider: str | None = None,
+    api_key: str | None = None,
+) -> OpenAICompatibleClient:
+    """Factory: merge config + env and construct the right client."""
+    settings = resolve_provider_settings(
+        provider=provider,
+        base_url=base_url,
+        model=model,
+        api_key=api_key,
+    )
+    # Prefer explicit config model when env did not override and provider is local.
+    final_model = settings["model"]
+    if settings["provider"] == "local" and not os.getenv("LLM_MODEL"):
+        final_model = model or settings["model"]
+    final_url = settings["base_url"]
+    # Config base_url wins for local when LLM_BASE_URL not set and LLAMA_* not set.
+    if settings["provider"] == "local" and not os.getenv("LLM_BASE_URL"):
+        if not (os.getenv("LLAMA_HOST") or os.getenv("LLAMA_PORT")):
+            final_url = base_url.rstrip("/")
+
+    return OpenAICompatibleClient(
+        base_url=final_url,
+        model=final_model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout_sec=timeout_sec,
+        response_format=response_format,
+        api_key=settings["api_key"],
+        provider=settings["provider"],
+    )

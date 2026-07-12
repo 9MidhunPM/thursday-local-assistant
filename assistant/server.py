@@ -14,7 +14,13 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
+from assistant.agent.confirm import confirm_broker
 from assistant.runtime import AssistantRuntime
+from assistant.security import (
+    assert_bind_allowed,
+    check_request_auth,
+    require_token_configured_for_remote,
+)
 
 # --- Static frontend (built React app) ---
 WEB_DIST = Path(__file__).parent / "web" / "dist"
@@ -129,12 +135,13 @@ busy_lock = threading.Lock()
 running_port = 5005
 tts_active = False
 is_model_ready = False
-model_log_buffer = []
+model_log_buffer: list[str] = []
 active_conversation_id: int | None = None
-http_server: ThreadingHTTPServer | None = None
+http_server: "ThreadingHTTPServer | None" = None
 server_thread: threading.Thread | None = None
-http_server: ThreadingHTTPServer | None = None
-server_thread: threading.Thread | None = None
+
+# Wire confirmations to SSE so the web UI can approve dangerous tools.
+confirm_broker.set_broadcast(broadcaster.broadcast)
 
 
 def _serialize_message(raw: dict[str, Any]) -> dict[str, Any]:
@@ -188,25 +195,58 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         # Suppress logging HTTP requests to stdout to keep CLI clean!
         pass
 
+    def _headers_dict(self) -> dict[str, str]:
+        return {k: v for k, v in self.headers.items()}
+
+    def _require_auth(self, *, query_token: str | None = None) -> bool:
+        if check_request_auth(self._headers_dict(), query_token):
+            return True
+        self.send_response(401)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(b'{"error":"Unauthorized. Set Authorization: Bearer <THURSDAY_API_TOKEN>."}')
+        return False
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Authorization, X-Thursday-Token",
+        )
+        self.end_headers()
+
     def do_GET(self) -> None:
-        from urllib.parse import urlparse
-        parsed_path = urlparse(self.path).path
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        parsed_path = parsed.path
         if parsed_path == "/" or parsed_path == "/index.html":
             self._serve_index()
             return
 
-        if self.path == "/health":
+        if parsed_path == "/health" or self.path.startswith("/health"):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
+            provider = "local"
+            model_name = ""
+            mode = "local"
+            if server_runtime and server_runtime.llm:
+                provider = server_runtime.llm.provider
+                model_name = server_runtime.llm.model
+                mode = "local" if server_runtime.llm.is_local else "api"
             health_data = {
                 "status": "ok" if is_model_ready else "starting",
                 "model_ready": is_model_ready,
                 "busy": is_busy,
                 "tts_active": tts_active,
                 "clients": len(broadcaster.clients),
-                "llama_server_running": True,
+                "provider": provider,
+                "model": model_name,
+                "mode": mode,
             }
             self.wfile.write(json.dumps(health_data).encode())
             return
@@ -378,8 +418,8 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         """Get an example usage for a tool."""
         examples = {
             "web_search": "Search for 'latest AI news'",
-            "file_read": "Read file '/home/user/documents/notes.txt'",
-            "file_write": "Write 'Hello world' to '/tmp/test.txt'",
+            "read_file": "Read file '~/documents/notes.txt'",
+            "write_file": "Write 'Hello world' to a path under allowed write roots",
             "calculate": "Calculate 'sqrt(144) + 10'",
             "convert": "Convert '100 fahrenheit to celsius'",
             "system_monitor": "Get system information with full details",
@@ -496,8 +536,13 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self._send_json(200, {"id": cid, "title": title.strip()[:100]})
 
     def do_DELETE(self) -> None:
-        from urllib.parse import urlparse
-        parsed_path = urlparse(self.path).path
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        parsed_path = parsed.path
+        query = parse_qs(parsed.query)
+        q_token = (query.get("token") or [None])[0]
+        if parsed_path.startswith("/api/") and not self._require_auth(query_token=q_token):
+            return
         if parsed_path.startswith("/api/conversations/"):
             if not server_runtime:
                 self.send_error(503, "Agent not initialized")
@@ -520,16 +565,43 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self.send_error(404, "Not Found")
 
     def do_PATCH(self) -> None:
-        from urllib.parse import urlparse
-        parsed_path = urlparse(self.path).path
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        parsed_path = parsed.path
+        query = parse_qs(parsed.query)
+        q_token = (query.get("token") or [None])[0]
+        if parsed_path.startswith("/api/") and not self._require_auth(query_token=q_token):
+            return
         if parsed_path.startswith("/api/conversations/"):
             self.handle_modify_conversation(parsed_path)
             return
         self.send_error(404, "Not Found")
 
     def do_POST(self) -> None:
-        from urllib.parse import urlparse
-        parsed_path = urlparse(self.path).path
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        parsed_path = parsed.path
+        query = parse_qs(parsed.query)
+        q_token = (query.get("token") or [None])[0]
+
+        # All mutating API routes require the optional shared token when configured.
+        if parsed_path.startswith("/api/") and not self._require_auth(query_token=q_token):
+            return
+
+        if parsed_path == "/api/confirm":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length) if content_length else b"{}"
+            try:
+                data = json.loads(body) if body else {}
+            except Exception:
+                self.send_error(400, "Invalid JSON")
+                return
+            confirm_id = str(data.get("id") or "")
+            approved = bool(data.get("approved"))
+            ok = confirm_broker.resolve(confirm_id, approved) if confirm_id else False
+            self._send_json(200 if ok else 404, {"ok": ok, "id": confirm_id, "approved": approved})
+            return
+
         if parsed_path == "/api/message":
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length)
@@ -617,12 +689,19 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if parsed_path == "/api/shutdown":
+            # Extra guard: if a token is configured it was already checked above;
+            # if not, still allow only from loopback-ish clients by default.
+            remote = self.client_address[0] if self.client_address else ""
+            if remote not in {"127.0.0.1", "::1", "localhost"} and not os.getenv(
+                "THURSDAY_API_TOKEN"
+            ):
+                self.send_error(403, "Shutdown from remote host requires THURSDAY_API_TOKEN")
+                return
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(json.dumps({"status": "shutting_down"}).encode())
-            # Trigger shutdown in background to allow response to be sent
             threading.Thread(target=shutdown_server, daemon=True).start()
             return
 
@@ -796,35 +875,39 @@ def start_server(
     host: str | None = None,
     port: int | None = None,
 ) -> None:
-    global server_runtime, running_port, http_server, server_thread
+    global server_runtime, running_port, http_server, server_thread, is_model_ready
     server_runtime = runtime
 
     host = host or os.getenv("THURSDAY_HOST", "127.0.0.1")
     port = port if port is not None else int(os.getenv("THURSDAY_PORT", "5005"))
 
-    llama_host = os.getenv("LLAMA_HOST", "127.0.0.1")
-    llama_port = os.getenv("LLAMA_PORT", "8080")
-    health_url = f"http://{llama_host}:{llama_port}/health"
+    assert_bind_allowed(host)
+    require_token_configured_for_remote(host)
 
-    def poll_health():
+    def poll_health() -> None:
         global is_model_ready
-        import urllib.request
-        import json
-        import time
         while True:
             try:
-                resp = urllib.request.urlopen(health_url, timeout=1)
-                data = json.loads(resp.read().decode("utf-8"))
-                if data.get("status") in ("ok", "ready"):
-                    if not is_model_ready:
-                        is_model_ready = True
-                        broadcaster.broadcast("model_ready", {})
+                if server_runtime and server_runtime.llm:
+                    status = server_runtime.llm.health_check()
+                    ready = status.get("status") == "healthy"
                 else:
+                    ready = False
+                if ready and not is_model_ready:
+                    is_model_ready = True
+                    broadcaster.broadcast("model_ready", {})
+                elif not ready:
                     is_model_ready = False
             except Exception:
                 is_model_ready = False
             time.sleep(2.0)
-    
+
+    # Cloud APIs are ready immediately when a key is present.
+    if runtime.llm and not runtime.llm.is_local:
+        check = runtime.llm.health_check()
+        if check.get("status") == "healthy":
+            is_model_ready = True
+
     threading.Thread(target=poll_health, daemon=True).start()
 
     current_port = port
@@ -840,11 +923,15 @@ def start_server(
         return
 
     http_server = server
-
-    # Start the server thread
     t = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread = t
     t.start()
+
+    mode = "local" if runtime.llm.is_local else f"api ({runtime.llm.provider})"
+    print(
+        f"Thursday server on http://{host}:{running_port}  "
+        f"[LLM: {mode} · {runtime.llm.model}]"
+    )
 
 
 def shutdown_server() -> None:

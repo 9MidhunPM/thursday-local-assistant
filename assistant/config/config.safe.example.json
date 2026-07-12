@@ -1,0 +1,57 @@
+{
+  "model": {
+    "provider": "local",
+    "base_url": "http://127.0.0.1:8080",
+    "model": "local-model",
+    "temperature": 0.2,
+    "max_tokens": 1024,
+    "request_timeout_sec": 90,
+    "json_retries": 2,
+    "response_format": null,
+    "context_budget_tokens": 7000
+  },
+  "tools": {
+    "read_roots": ["~", "."],
+    "write_roots": ["."],
+    "unrestricted_paths": false,
+    "enabled_groups": [],
+    "app_commands": {
+      "firefox": ["firefox"],
+      "spotify": ["spotify"],
+      "vscode": ["code"],
+      "terminal": ["gnome-terminal", "konsole", "alacritty", "kitty", "xterm"]
+    },
+    "terminal": {
+      "allow_shell": false,
+      "whitelist_commands": ["ls", "pwd", "echo", "date", "whoami", "cat", "head", "tail", "wc", "df", "free", "uname"],
+      "blacklist_patterns": [],
+      "confirm_patterns": [],
+      "timeout_sec": 15
+    }
+  },
+  "memory": {
+    "db_path": "assistant/database/memory.db"
+  },
+  "voice": {
+    "tts_enabled": true,
+    "tts_voice": "en-US-EmmaMultilingualNeural",
+    "tts_rate": "+0%",
+    "stt_enabled": true,
+    "stt_recognizer": "google",
+    "stt_language": "en-US"
+  },
+  "logging": {
+    "directory": "assistant/logs",
+    "level": "INFO"
+  },
+  "agent": {
+    "user_name": "User",
+    "max_tool_steps": 6,
+    "max_parallel_tools": 4,
+    "auto_extract": true,
+    "extract_max_tokens": 256,
+    "smart_tool_filter": true,
+    "web_confirm_timeout_sec": 60,
+    "stream_responses": true
+  }
+}

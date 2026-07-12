@@ -68,13 +68,18 @@ def main() -> None:
     agent = runtime.agent
     config = runtime.config
     loggers = runtime.loggers
+    llm = runtime.llm
 
     # Start the HTTP/SSE server
     start_server(runtime)
     from assistant.server import running_port
 
+    mode = "local" if llm.is_local else f"cloud ({llm.provider})"
+    model_line = f"{COLOR_GRAY}LLM: {mode} · {llm.model} · user={config.agent.user_name}{COLOR_RESET}"
+
     if args.web:
         print_banner()
+        print(model_line)
         print(f"{COLOR_BOLD}{COLOR_GREEN}✔ Web Server started!{COLOR_RESET}")
         print(f"👉 Local Web UI is available at: {COLOR_BOLD}http://127.0.0.1:{running_port}{COLOR_RESET}")
         print("Opening browser automatically...")
@@ -89,6 +94,7 @@ def main() -> None:
 
     # CLI mode
     print_banner()
+    print(model_line)
     print(f"Status: Ready (Web UI running at http://127.0.0.1:{running_port})")
     print("Type 'exit' or 'quit' to close.\n")
 

@@ -77,6 +77,12 @@ export interface ToolResultData {
   [key: string]: unknown
 }
 
+export interface ConfirmRequiredData {
+  id: string
+  prompt: string
+  timeout_sec?: number
+}
+
 export type AgentEvent =
   | { type: 'init'; data: InitData }
   | { type: 'model_ready'; data: Record<string, never> }
@@ -93,4 +99,6 @@ export type AgentEvent =
   | { type: 'error'; data: { content: string } }
   | { type: 'conversation_updated'; data: { id: number; title: string } }
   | { type: 'conversation_deleted'; data: { id: number } }
+  | { type: 'confirm_required'; data: ConfirmRequiredData }
+  | { type: 'confirm_resolved'; data: { id: string; approved: boolean } }
   | { type: 'shutdown'; data: { reason?: string } }

@@ -97,7 +97,7 @@ class TimerTool(BaseTool):
 class NetworkSpeedTool(BaseTool):
     metadata: ToolMetadata = ToolMetadata(
         name="network_speed_test",
-        description="Run a network speed test. This takes about 15-30 seconds to complete.",
+        description="Run a network speed test (takes 15-30s).",
         parameters={
             "type": "object",
             "properties": {}

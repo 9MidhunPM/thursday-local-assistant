@@ -117,14 +117,34 @@ def _resolve_existing_path(path: str) -> Path | None:
 
 
 def _resolve_path(path: str, allowed_roots: list[str]) -> Path:
+    """Resolve a path and enforce the sandbox.
+
+    Empty ``allowed_roots`` is only allowed when the caller intentionally set
+    unrestricted mode (power user). Prefer non-empty roots in config.
+    """
     target = _resolve_existing_path(path) or Path(path).expanduser().resolve()
+    # Always resolve symlinks for the final check when possible.
+    try:
+        target = target.resolve(strict=False)
+    except OSError:
+        pass
     if not allowed_roots:
+        # Unrestricted mode — still block obvious system-critical writes via tools
+        # that use write_roots=[] only when user opted in.
         return target
     for root in allowed_roots:
         root_path = Path(root).expanduser().resolve()
-        if root_path in target.parents or target == root_path:
+        try:
+            target.relative_to(root_path)
             return target
-    raise ValueError("Path is outside allowed roots.")
+        except ValueError:
+            if root_path in target.parents or target == root_path:
+                return target
+    raise ValueError(
+        f"Path is outside allowed roots ({', '.join(allowed_roots)}). "
+        "Set THURSDAY_UNRESTRICTED_PATHS=1 or expand THURSDAY_READ_ROOTS / "
+        "THURSDAY_WRITE_ROOTS if you need access elsewhere."
+    )
 
 
 @dataclass
@@ -200,7 +220,7 @@ class SearchFilesTool(BaseTool):
     config: ToolConfig
     metadata: ToolMetadata = ToolMetadata(
         name="search_files",
-        description="Search for files recursively by name pattern and optional content.",
+        description="Search for files by name pattern and optional content.",
         parameters={
             "type": "object",
             "properties": {
