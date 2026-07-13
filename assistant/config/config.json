@@ -2,7 +2,7 @@
   "model": {
     "provider": "local",
     "base_url": "http://127.0.0.1:8080",
-    "model": "Qwen2.5-7B-Instruct-Q4_K_M_FIXED",
+    "model": "Qwen2.5-7B-Instruct",
     "temperature": 0.2,
     "max_tokens": 1024,
     "request_timeout_sec": 90,
