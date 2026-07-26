@@ -62,6 +62,11 @@ def main() -> None:
         action="store_true",
         help="Run the assistant with a web-based interface instead of the CLI.",
     )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="With --web: don't open a browser window automatically.",
+    )
     args = parser.parse_args()
 
     runtime = build_runtime(args.config)
@@ -82,8 +87,11 @@ def main() -> None:
         print(model_line)
         print(f"{COLOR_BOLD}{COLOR_GREEN}✔ Web Server started!{COLOR_RESET}")
         print(f"👉 Local Web UI is available at: {COLOR_BOLD}http://127.0.0.1:{running_port}{COLOR_RESET}")
-        print("Opening browser automatically...")
-        open_browser()
+        if args.no_browser:
+            print("Browser auto-open disabled (--no-browser).")
+        else:
+            print("Opening browser automatically...")
+            open_browser()
         print("\nPress Ctrl+C to stop the server.")
         try:
             while True:

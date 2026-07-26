@@ -6,6 +6,7 @@ import os
 import queue
 import socketserver
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -963,11 +964,32 @@ def shutdown_server() -> None:
     
     # Clear all clients
     broadcaster.remove_all_clients()
-    
+
     print("Thursday server shutdown complete.")
+
+    # Terminate the process — otherwise the main thread keeps running and
+    # leaves a ghost process behind after the port is released.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
 
 
 def open_browser() -> None:
     # Give the server a small moment to start up
     time.sleep(0.5)
-    webbrowser.open(f"http://127.0.0.1:{running_port}")
+    url = f"http://127.0.0.1:{running_port}"
+    import shutil
+    brave = shutil.which("brave") or shutil.which("brave-browser")
+    if brave:
+        import subprocess
+        from pathlib import Path
+        app_dir = Path.home() / ".config" / "brave-thursday-app"
+        app_dir.mkdir(parents=True, exist_ok=True)
+        subprocess.Popen(
+            [brave, f"--app={url}", f"--user-data-dir={app_dir}"],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    else:
+        webbrowser.open(url)
