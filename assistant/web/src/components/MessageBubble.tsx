@@ -9,20 +9,20 @@ interface Props {
 }
 
 const enter = {
-  hidden: { opacity: 0, y: 12, scale: 0.98 },
-  show: {
+  initial: { opacity: 0, y: 10, scale: 0.985 },
+  animate: {
     opacity: 1,
     y: 0,
     scale: 1,
-    transition: { type: 'spring', stiffness: 380, damping: 30 },
+    transition: { type: 'spring', stiffness: 520, damping: 36, mass: 0.7 },
   },
-  exit: { opacity: 0, y: -8, scale: 0.98, transition: { duration: 0.15 } },
+  exit: { opacity: 0, y: -6, scale: 0.985, transition: { duration: 0.14 } },
 }
 
 function MessageBubbleBase({ item, registerContent }: Props) {
   if (item.kind === 'user') {
     return (
-      <motion.div variants={enter} className="message user" layout>
+      <motion.div {...enter} className="message user" layout="position">
         {item.content}
       </motion.div>
     )
@@ -31,7 +31,7 @@ function MessageBubbleBase({ item, registerContent }: Props) {
   // Agent
   if (item.error) {
     return (
-      <motion.div variants={enter} className="message agent" layout>
+      <motion.div {...enter} className="message agent" layout="position">
         <span className="msg-sender">⚡ Thursday</span>
         <span style={{ color: 'var(--error-color)' }}>{item.content}</span>
       </motion.div>
@@ -43,7 +43,7 @@ function MessageBubbleBase({ item, registerContent }: Props) {
     : renderMarkdown(item.content)
 
   return (
-    <motion.div variants={enter} className="message agent" layout>
+    <motion.div {...enter} className="message agent" layout="position">
       <span className="msg-sender">⚡ Thursday</span>
       <div ref={registerContent} dangerouslySetInnerHTML={{ __html: html }} />
     </motion.div>

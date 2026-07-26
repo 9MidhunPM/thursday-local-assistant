@@ -80,7 +80,7 @@ export default function Sidebar({
                     initial="hidden"
                     animate="show"
                     exit="exit"
-                    layout
+                    layout="position"
                     className={`sidebar-item${c.id === activeId ? ' active' : ''}`}
                     onClick={() => !busy && editingId !== c.id && onSelect(c.id)}
                   >

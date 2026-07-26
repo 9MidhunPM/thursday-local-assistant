@@ -7,18 +7,39 @@ interface Props {
 }
 
 const cardEnter = {
-  hidden: { opacity: 0, y: 10, height: 0 },
-  show: {
+  initial: { opacity: 0, y: 8, height: 0 },
+  animate: {
     opacity: 1,
     y: 0,
     height: 'auto',
-    transition: { type: 'spring', stiffness: 360, damping: 30 },
+    transition: { type: 'spring', stiffness: 480, damping: 36, mass: 0.7 },
   },
-  exit: { opacity: 0, height: 0, transition: { duration: 0.2 } },
+  exit: { opacity: 0, height: 0, transition: { duration: 0.18 } },
+}
+
+const TOOL_ICONS: Record<string, string> = {
+  shell: '⌨️',
+  web: '🌐',
+  file: '📄',
+  files: '📄',
+  memory: '🧠',
+  spotify: '🎵',
+  voice: '🎙️',
+  apps: '🖥️',
+  system: '⚙️',
+}
+
+function iconFor(tool: string): string {
+  const t = tool.toLowerCase()
+  for (const key of Object.keys(TOOL_ICONS)) {
+    if (t.includes(key)) return TOOL_ICONS[key]
+  }
+  return '⚙️'
 }
 
 function ToolCardBase({ item }: Props) {
-  const [expanded, setExpanded] = useState(true)
+  // Default collapsed once we have a result, expanded while running so progress is visible.
+  const [expanded, setExpanded] = useState(item.status === 'running')
 
   const statusClass = `status-${item.status}`
   const statusLabel =
@@ -26,12 +47,12 @@ function ToolCardBase({ item }: Props) {
 
   return (
     <motion.div
-      variants={cardEnter}
-      layout
+      {...cardEnter}
+      layout="position"
       className={`tool-card ${statusClass}${expanded ? ' expanded' : ''}`}
     >
       <div className="tool-card-header" onClick={() => setExpanded((e) => !e)}>
-        <span className="tool-card-icon">⚙️</span>
+        <span className="tool-card-icon">{iconFor(item.tool)}</span>
         <span className="tool-card-name">{item.tool}</span>
         <span className="tool-card-status">
           {statusLabel}
@@ -46,7 +67,7 @@ function ToolCardBase({ item }: Props) {
         <motion.span
           className="tool-card-chevron"
           animate={{ rotate: expanded ? 180 : 0 }}
-          transition={{ duration: 0.2 }}
+          transition={{ duration: 0.18 }}
         >
           ▾
         </motion.span>
@@ -58,7 +79,7 @@ function ToolCardBase({ item }: Props) {
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.22, ease: 'easeOut' }}
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             style={{ overflow: 'hidden' }}
           >
             <div className="tool-card-body">
