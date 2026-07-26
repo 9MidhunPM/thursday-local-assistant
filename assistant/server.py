@@ -950,7 +950,8 @@ def start_server(
             current_port += 1
     else:
         print(f"Error: Could not bind HTTP server to any port in range {port}-{port+50}")
-        return
+        sys.stdout.flush()
+        sys.exit(1)
 
     http_server = server
     t = threading.Thread(target=server.serve_forever, daemon=True)
@@ -967,6 +968,15 @@ def start_server(
 def shutdown_server() -> None:
     """Gracefully shutdown the HTTP server."""
     global http_server, server_thread, server_runtime
+
+    # Hard deadline: runtime.shutdown() can block (httpx/TTS close), and a
+    # hung shutdown leaves a port-less ghost holding the instance lock.
+    def _force_exit() -> None:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
+
+    threading.Timer(8.0, _force_exit).start()
     
     print("Shutting down Thursday server...")
     

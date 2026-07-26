@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -75,16 +76,78 @@ def main() -> None:
     loggers = runtime.loggers
     llm = runtime.llm
 
-    # Single-instance guard: a second process would silently bind a fallback
-    # port and linger as a ghost. Exit early instead.
+    # Single-instance guard with self-healing: a second process normally
+    # exits, but a dead or unresponsive lock holder (ghost with no port)
+    # gets replaced instead of blocking launches forever.
     import fcntl
+    import signal
+    import urllib.request
 
-    lock_fd = open("/tmp/thursday-server.lock", "w")  # noqa: SIM115
-    try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        print("Another Thursday server instance is already running — exiting.")
-        raise SystemExit(0) from None
+    lock_path = "/tmp/thursday-server.lock"
+
+    def _holder_pid() -> int | None:
+        # Prefer the PID recorded in the lock file (written by current code).
+        try:
+            with open(lock_path) as f:
+                pid = int(f.read().strip() or "0")
+                if pid:
+                    return pid
+        except (OSError, ValueError):
+            pass
+        # Fallback: find the flock holder via /proc/locks (inode match), for
+        # ghosts started before the PID-recording code existed.
+        try:
+            ino = str(os.stat(lock_path).st_ino)
+            with open("/proc/locks") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) > 5 and parts[5].endswith(f":{ino}"):
+                        return int(parts[4])
+        except (OSError, ValueError):
+            pass
+        return None
+
+    def _holder_unresponsive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return True  # dead
+        host = os.getenv("THURSDAY_HOST", "127.0.0.1")
+        port = os.getenv("THURSDAY_PORT", "5005")
+        if host in {"0.0.0.0", "::"}:
+            host = "127.0.0.1"
+        try:
+            with urllib.request.urlopen(f"http://{host}:{port}/health", timeout=2) as r:
+                return r.status != 200
+        except Exception:
+            return True
+
+    lock_fd = open(lock_path, "a+")  # noqa: SIM115
+    acquired = False
+    for attempt in range(6):
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+            break
+        except OSError:
+            pid = _holder_pid()
+            if pid and pid != os.getpid() and _holder_unresponsive(pid):
+                print(f"Replacing unresponsive Thursday server (pid {pid})...")
+                try:
+                    os.kill(pid, signal.SIGTERM if attempt < 3 else signal.SIGKILL)
+                except OSError:
+                    pass
+                time.sleep(1)
+                continue
+            print("Another Thursday server instance is already running — exiting.")
+            raise SystemExit(0) from None
+    if not acquired:
+        print("Could not acquire the Thursday server lock — exiting.")
+        raise SystemExit(1)
+    lock_fd.seek(0)
+    lock_fd.truncate()
+    lock_fd.write(str(os.getpid()))
+    lock_fd.flush()
 
     # Start the HTTP/SSE server
     start_server(runtime)
