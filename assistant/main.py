@@ -75,6 +75,17 @@ def main() -> None:
     loggers = runtime.loggers
     llm = runtime.llm
 
+    # Single-instance guard: a second process would silently bind a fallback
+    # port and linger as a ghost. Exit early instead.
+    import fcntl
+
+    lock_fd = open("/tmp/thursday-server.lock", "w")  # noqa: SIM115
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("Another Thursday server instance is already running — exiting.")
+        raise SystemExit(0) from None
+
     # Start the HTTP/SSE server
     start_server(runtime)
     from assistant.server import running_port

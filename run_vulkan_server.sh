@@ -47,6 +47,12 @@ fi
 echo "Starting llama.cpp server with Vulkan backend on $LLAMA_HOST:$LLAMA_PORT..."
 echo "Model: $MODEL"
 [[ -n "$EXTRA_ARGS" ]] && echo "Extra args: $EXTRA_ARGS"
+
+# Persist the prompt-prefix cache per model so warm starts survive restarts.
+MODEL_STEM="$(basename "$MODEL" .gguf)"
+SLOT_DIR="${LLAMA_SLOT_DIR:-$HOME/.cache/thursday-cache/$MODEL_STEM}"
+mkdir -p "$SLOT_DIR"
+
 # shellcheck disable=SC2086
 exec "$LLAMA_SERVER" \
     -m "$MODEL" \
@@ -55,4 +61,5 @@ exec "$LLAMA_SERVER" \
     -t "$LLAMA_THREADS" \
     --host "$LLAMA_HOST" \
     --port "$LLAMA_PORT" \
+    --slot-save-path "$SLOT_DIR" \
     $EXTRA_ARGS

@@ -216,6 +216,25 @@ class Agent:
             f"Call multiple tools in one turn when efficient. Never expose secrets."
         )
 
+    def warmup_payload(self) -> tuple[list[ChatMessage], list[dict[str, Any]]]:
+        """Minimal request mirroring a typical turn's stable prompt prefix.
+
+        Used once at startup to pre-warm llama.cpp's prefix cache (and GPU
+        graphs), so the user's first real turn only prefills the delta.
+        """
+        user_text = "Hello"
+        tools = filter_tools_payload(
+            self._tools_payload,
+            user_text,
+            enabled_groups=list(self._config.enabled_tool_groups) or None,
+            smart=self._config.smart_tool_filter,
+        )
+        messages = [
+            ChatMessage(role="system", content=self._base_system_message),
+            ChatMessage(role="user", content=user_text),
+        ]
+        return messages, tools
+
     def _get_dynamic_context(self, user_text: str) -> str | None:
         memory_context = self._memory.build_context(user_text)
         if any(memory_context.values()):

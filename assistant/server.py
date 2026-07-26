@@ -890,6 +890,25 @@ def start_server(
     assert_bind_allowed(host)
     require_token_configured_for_remote(host)
 
+    warmup_state = {"started": False}
+
+    def warmup_llm() -> None:
+        """Pre-warm llama.cpp's prefix cache (and GPU graphs) with a minimal
+        request mirroring a typical turn, so the user's first real turn only
+        prefills the delta instead of the full system prompt + tool schemas."""
+        rt = server_runtime
+        if not rt or not getattr(rt, "agent", None) or not getattr(rt, "llm", None):
+            return
+        if not getattr(rt.llm, "is_local", False):
+            return  # cloud providers don't need warmup
+        try:
+            messages, tools = rt.agent.warmup_payload()
+            t0 = time.monotonic()
+            rt.llm.chat(messages, tools=tools, use_response_format=False)
+            print(f"LLM warmup completed in {time.monotonic() - t0:.1f}s")
+        except Exception as exc:
+            print(f"LLM warmup failed (non-fatal): {exc}")
+
     def poll_health() -> None:
         global is_model_ready
         while True:
@@ -902,8 +921,13 @@ def start_server(
                 if ready and not is_model_ready:
                     is_model_ready = True
                     broadcaster.broadcast("model_ready", {})
+                    if not warmup_state["started"]:
+                        warmup_state["started"] = True
+                        threading.Thread(target=warmup_llm, daemon=True).start()
                 elif not ready:
                     is_model_ready = False
+                    # Re-arm: a model switch/restart should be warmed again.
+                    warmup_state["started"] = False
             except Exception:
                 is_model_ready = False
             time.sleep(2.0)
