@@ -6,6 +6,10 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Caller overrides (e.g. model.sh) win over .env values.
+_OVERRIDE_MODEL_PATH="${MODEL_PATH:-}"
+_OVERRIDE_MODEL_ARGS="${MODEL_ARGS:-}"
+
 # Load .env if present (export all variables defined in it).
 if [[ -f "$PROJECT_DIR/.env" ]]; then
     set -a
@@ -15,10 +19,12 @@ if [[ -f "$PROJECT_DIR/.env" ]]; then
 fi
 
 # Expand ~ in configured paths and fall back to sensible defaults.
-LLAMA_SERVER="${LLAMA_SERVER_BIN:-$HOME/llama-vulkan/build-vulkan/bin/llama-server}"
+LLAMA_SERVER="${LLAMA_SERVER_BIN:-$HOME/llama.cpp/build-vulkan/bin/llama-server}"
 LLAMA_SERVER="${LLAMA_SERVER/#\~/$HOME}"
-MODEL="${MODEL_PATH:-$HOME/.models/model.gguf}"
+MODEL="${_OVERRIDE_MODEL_PATH:-${MODEL_PATH:-$HOME/Models/model.gguf}}"
 MODEL="${MODEL/#\~/$HOME}"
+# Extra llama-server flags (word-split on purpose; e.g. from model.sh).
+EXTRA_ARGS="${_OVERRIDE_MODEL_ARGS:-${MODEL_ARGS:-}}"
 
 LLAMA_HOST="${LLAMA_HOST:-127.0.0.1}"
 LLAMA_PORT="${LLAMA_PORT:-8080}"
@@ -39,10 +45,14 @@ if [[ ! -f "$MODEL" ]]; then
 fi
 
 echo "Starting llama.cpp server with Vulkan backend on $LLAMA_HOST:$LLAMA_PORT..."
+echo "Model: $MODEL"
+[[ -n "$EXTRA_ARGS" ]] && echo "Extra args: $EXTRA_ARGS"
+# shellcheck disable=SC2086
 exec "$LLAMA_SERVER" \
     -m "$MODEL" \
     -ngl "$LLAMA_NGL" \
     -c "$LLAMA_CTX" \
     -t "$LLAMA_THREADS" \
     --host "$LLAMA_HOST" \
-    --port "$LLAMA_PORT"
+    --port "$LLAMA_PORT" \
+    $EXTRA_ARGS
