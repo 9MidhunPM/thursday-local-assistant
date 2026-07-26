@@ -656,6 +656,11 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             if server_runtime and server_runtime.tts:
                 server_runtime.tts.stop()
 
+            # Show the user's message in all UIs (web, quickshell), the same
+            # way the CLI does — otherwise API-sent prompts (voice PTT) are
+            # invisible in the chat history until the response arrives.
+            broadcaster.broadcast("user_message", {"content": prompt})
+
             # Start agent reasoning in a separate thread
             threading.Thread(
                 target=self.run_agent,
