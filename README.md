@@ -20,6 +20,7 @@ Thursday talks to any **OpenAI-compatible** endpoint (llama.cpp, OpenAI, OpenRou
 - 💾 **Memory** — SQLite long-term + session history + automatic fact extraction
 - 🎯 **Smart tool filtering** — sends only relevant tools each turn (saves context)
 - 🎙️ **Voice** — Edge TTS + SpeechRecognition (optional)
+- ⌨️ **Global hotkeys** — Super+C opens Thursday; hold Super+Alt to push-to-talk with a live transcript overlay
 - 🔒 **Safer defaults** — path sandboxes, shell policy, optional API token, loopback bind guard
 - 🌐 **Web UI** — streaming, tool cards, conversations, voice visualizer, action confirmations
 
@@ -110,8 +111,14 @@ cp assistant/config/config.safe.example.json assistant/config/config.json
 ```bash
 ./run.sh              # CLI (+ web server in background)
 ./run.sh --web        # Web UI, opens browser
+./run_with_llm.sh     # Desktop app mode: one window on :5005, closing it stops everything
 python -m assistant.main --config path/to/config.json
 ```
+
+The **desktop entry** (`thursday.desktop`) uses `run_with_llm.sh`: it opens a single app
+window at `http://127.0.0.1:5005` (focusing instead of duplicating), and when the last
+Thursday window closes it shuts down **both** the Thursday server and the llama.cpp
+server (owned, adopted, or orphaned) — nothing keeps running in the background.
 
 | Setting | Where | Notes |
 |---------|--------|--------|
@@ -121,6 +128,58 @@ python -m assistant.main --config path/to/config.json
 | API token | `.env` → `THURSDAY_API_TOKEN` | Optional; required for remote binds |
 | Tools / prompt / voice | `assistant/config/config.json` | Behavior |
 | User name | `.env` → `THURSDAY_USER_NAME` | Injected into system prompt |
+| Model selection | `./model.sh` | Test/switch GGUFs without editing `.env` |
+
+---
+
+## Switching local models
+
+`./model.sh` swaps the llama.cpp model on the fly — test first, apply permanently only
+when you're happy:
+
+```bash
+./model.sh            # rofi picker (or numbered menu)
+./model.sh list       # all ~/Models/*.gguf with RUNNING / CONFIGURED markers
+./model.sh use 8b     # switch now (runtime only — .env untouched)
+./model.sh test 4b    # switch + raw llama ping: reply + tokens/sec
+./model.sh apply 4b   # switch + write MODEL_PATH to .env (permanent)
+./model.sh revert     # back to the model configured in .env
+```
+
+- Names are fuzzy: `8b`, `gemma`, `qwen3-4b`, or the full filename all work.
+- Per-model flags live in `model_args_for()` at the top of `model.sh` — Qwen3 models
+  automatically get thinking disabled (`--jinja --chat-template-kwargs {"enable_thinking":false}`),
+  so answers never contain `<think>` spam.
+- llama starts are serialized via `/tmp/thursday-llama.lock` across the desktop launcher,
+  quickshell button and `model.sh` — no port races.
+- Thursday's `/health` model *label* may lag until Thursday restarts (cosmetic only —
+  inference always uses the RUNNING model).
+
+---
+
+## Global hotkeys (Linux / Hyprland)
+
+| Hotkey | Action |
+|--------|--------|
+| **Super+C** | Open Thursday: focuses the existing window, starts the server if down, or opens the Web UI |
+| **Super+Alt** (hold) | Push-to-talk: records while held with a live transcript, then shows the streamed answer in a centered **quickshell** overlay — without stealing window focus (spoken reply via TTS) |
+
+Voice overlay integration (quickshell):
+- `ThursdayVoice.qml` reads `/tmp/thursday_voice_overlay.json` (state/transcript/answer, updated atomically by the daemon).
+- `/tmp/thursday_voice_active` turns the bar's Thursday button red while you're being heard.
+- The button's notification popup is suppressed while the voice HUD shows the answer; without quickshell the daemon falls back to eww, then dunst.
+
+Setup:
+
+```bash
+pip install -e ".[hotkeys]"   # evdev for global key listening
+sudo usermod -aG input $USER  # read /dev/input (re-login after)
+./run_hotkeys.sh              # singleton daemon; autostarted via hyprland exec-once
+```
+
+- The overlay uses **eww** (`~/.config/eww/thursday.yuck`) and falls back to **dunst** notifications.
+- The Super+C bind lives in `hyprland.conf` → `~/.config/hypr/scripts/thursday-open.sh`.
+- Hyprland ≥0.55 routes `hyprctl dispatch` through Lua; both integrations auto-fallback between legacy and `hl.dsp` syntax.
 
 ---
 
@@ -129,6 +188,7 @@ python -m assistant.main --config path/to/config.json
 ```
 assistant/
 ├── main.py          # Entry (CLI + web)
+├── hotkeys.py       # Global hotkey daemon (Super+Alt push-to-talk)
 ├── runtime.py       # Wires config, LLM, tools, memory, voice
 ├── server.py        # HTTP + SSE
 ├── security.py      # Bind guard, API token, secret redaction
