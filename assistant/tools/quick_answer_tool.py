@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from assistant.tools.base import BaseTool, ToolMetadata
@@ -27,6 +28,22 @@ class QuickAnswerTool(BaseTool):
         self.search_tool = WebSearchTool(max_results=3)
         self.fetch_tool = FetchPageTool()
 
+    def _fetch_answer(self, url: str, question_words: set[str], context: Any) -> str:
+        """Fetch one page and return the first sentence matching the question."""
+        fetch_result = self.fetch_tool.execute(
+            {"url": url, "max_chars": 2000},
+            context,
+        )
+        if not fetch_result.get("success"):
+            return ""
+        content = fetch_result.get("text", "")
+        sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 20]
+        for sentence in sentences[:10]:  # Check first 10 sentences
+            sentence_words = set(sentence.lower().split())
+            if len(question_words & sentence_words) >= min(2, len(question_words) // 2):
+                return sentence
+        return ""
+
     def execute(self, arguments: dict[str, Any], context: Any) -> dict[str, Any]:
         question = arguments.get("question", "").strip()
         if not question:
@@ -35,53 +52,35 @@ class QuickAnswerTool(BaseTool):
         try:
             # Search for the question
             search_result = self.search_tool.execute(
-                {"query": question, "max_results": 3}, 
+                {"query": question, "max_results": 3},
                 context
             )
-            
+
             if not search_result.get("success"):
                 return {"success": False, "error": f"Search failed: {search_result.get('error')}"}
-            
+
             results = search_result.get("results", [])
             if not results:
                 return {"success": False, "error": "No search results found"}
-            
-            # Try to get content from the top results to find a direct answer
+
+            # Fetch the top 2 results in parallel and score sentences from each
             best_answer = ""
             best_source = ""
-            
-            for result in results[:2]:  # Check top 2 results
-                url = result.get("url")
-                if not url:
-                    continue
-                
-                # Fetch the page content
-                fetch_result = self.fetch_tool.execute(
-                    {"url": url, "max_chars": 2000}, 
-                    context
-                )
-                
-                if fetch_result.get("success"):
-                    content = fetch_result.get("text", "")
-                    # Simple extraction: look for sentences that might answer the question
-                    # This is a basic implementation - a more sophisticated one would use NLP
-                    sentences = [s.strip() for s in content.split('.') if len(s.strip()) > 20]
-                    
-                    # Look for sentences containing keywords from the question
-                    question_words = set(question.lower().split())
-                    for sentence in sentences[:10]:  # Check first 10 sentences
-                        sentence_words = set(sentence.lower().split())
-                        # If there's good overlap, this might be a good answer
-                        if len(question_words & sentence_words) >= min(2, len(question_words) // 2):
-                            if len(sentence) > len(best_answer):
-                                best_answer = sentence
-                                best_source = url
-                                break
-                    
-                    # If we found a good answer, break
-                    if best_answer:
+            question_words = set(question.lower().split())
+            candidates = [r.get("url") for r in results[:2] if r.get("url")]
+
+            if candidates:
+                with ThreadPoolExecutor(max_workers=len(candidates)) as pool:
+                    answers = list(
+                        pool.map(lambda u: self._fetch_answer(u, question_words, context), candidates)
+                    )
+                # Rank order wins (same semantics as the old sequential loop)
+                for url, answer in zip(candidates, answers, strict=True):
+                    if answer:
+                        best_answer = answer
+                        best_source = url
                         break
-            
+
             # If we didn't find a good answer from content, use the search snippets
             if not best_answer and results:
                 # Combine snippets from top results
