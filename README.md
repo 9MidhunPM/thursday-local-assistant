@@ -138,7 +138,7 @@ server (owned, adopted, or orphaned) — nothing keeps running in the background
 when you're happy:
 
 ```bash
-./model.sh            # rofi picker (or numbered menu)
+./model.sh            # rofi picker — applies permanently, reopens open windows
 ./model.sh list       # all ~/Models/*.gguf with RUNNING / CONFIGURED markers
 ./model.sh use 8b     # switch now (runtime only — .env untouched)
 ./model.sh test 4b    # switch + raw llama ping: reply + tokens/sec

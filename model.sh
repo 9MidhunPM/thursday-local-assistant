@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Thursday model switcher — swap the local llama.cpp model on the fly.
 #
-#   ./model.sh                 rofi menu (numbered menu if rofi is missing)
+#   ./model.sh                 rofi menu — applies permanently and reopens
+#                              any Thursday windows that were open
 #   ./model.sh list            all models + RUNNING / CONFIGURED markers
 #   ./model.sh use <name>      switch now (runtime only — .env untouched)
 #   ./model.sh apply <name>    switch now + permanent (.env + UI label + Thursday restart)
@@ -192,8 +193,9 @@ restart_thursday() {
 }
 
 cmd_apply() {
-    local file label
+    local file label wins_before
     file=$(resolve_model "$1")
+    wins_before=$(thursday_window_count)
     if [[ "$(running_model)" != "$file" ]]; then
         switch_to "$file"
     else
@@ -214,6 +216,7 @@ cmd_apply() {
         log "UI label set to '$label' (config.json)."
     fi
     restart_thursday
+    restore_thursday_windows "$wins_before"
     log "Applied permanently: MODEL_PATH=~/Models/$file"
 }
 
@@ -227,6 +230,53 @@ cmd_revert() {
     fi
     log "Reverting to configured model: $want"
     switch_to "$want"
+}
+
+# ---------------------------------------------------------------------------
+# Thursday window restore (for apply): if the app was open, keep it open
+# ---------------------------------------------------------------------------
+
+thursday_window_count() {
+    command -v hyprctl >/dev/null 2>&1 || { echo 0; return; }
+    hyprctl clients -j 2>/dev/null \
+        | jq '[.[] | select(.title | test("Thursday - AI Assistant"))] | length' 2>/dev/null \
+        || echo 0
+}
+
+focus_thursday_window() {
+    local addr
+    addr=$(hyprctl clients -j 2>/dev/null | jq -r \
+        '[.[] | select(.title | test("Thursday - AI Assistant"))][0].address // empty')
+    [[ -n "$addr" ]] || return 1
+    # Legacy dispatcher (stock Hyprland); fall back to Lua dispatch (0.55+).
+    if ! hyprctl dispatch focuswindow "address:$addr" 2>&1 | grep -qi error; then
+        return 0
+    fi
+    hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })" >/dev/null 2>&1
+}
+
+open_thursday_window() {
+    local brave app_dir
+    brave=$(command -v brave || command -v brave-browser || true)
+    if [[ -n "$brave" ]]; then
+        app_dir="$HOME/.config/brave-thursday-app"
+        mkdir -p "$app_dir"
+        setsid "$brave" --app="$THURSDAY_URL" --user-data-dir="$app_dir" >/dev/null 2>&1 < /dev/null &
+    else
+        setsid xdg-open "$THURSDAY_URL" >/dev/null 2>&1 < /dev/null &
+    fi
+}
+
+restore_thursday_windows() {
+    local before="$1"
+    (( before > 0 )) || return 0
+    command -v hyprctl >/dev/null 2>&1 || return 0
+    if (( $(thursday_window_count) == 0 )); then
+        log "Reopening Thursday window..."
+        open_thursday_window
+        sleep 3
+    fi
+    focus_thursday_window || true
 }
 
 cmd_test() {
@@ -297,7 +347,7 @@ cmd_menu() {
     fi
     [[ -n "${choice:-}" ]] || { log "cancelled."; exit 0; }
     choice="${choice%%  ●*}"; choice="${choice%%  ✓*}"
-    cmd_use "$choice"
+    cmd_apply "$choice"
 }
 
 # ---------------------------------------------------------------------------
