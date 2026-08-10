@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 import unittest
+from pathlib import Path
 from unittest import mock
 
-from assistant.llm.client import PROVIDER_PRESETS, resolve_provider_settings
+from assistant.config.loader import load_config
+from assistant.llm.client import ChatMessage, OpenAICompatibleClient, PROVIDER_PRESETS, resolve_provider_settings
 from assistant.security import check_request_auth, redact_secrets
 
 
@@ -36,6 +38,44 @@ class ProviderResolveTests(unittest.TestCase):
     def test_presets_exist(self) -> None:
         for name in ("local", "openai", "openrouter", "groq", "together", "deepseek", "mistral"):
             self.assertIn(name, PROVIDER_PRESETS)
+
+    def test_gpt_5_uses_max_completion_tokens(self) -> None:
+        client = OpenAICompatibleClient(
+            base_url="https://api.openai.com/v1",
+            model="gpt-5.6-luna",
+            temperature=0.2,
+            provider="openai",
+            max_tokens=512,
+            timeout_sec=30,
+            response_format=None,
+        )
+        try:
+            payload = client._build_payload(
+                [ChatMessage(role="user", content="Hello")],
+                [
+                    {
+                        "type": "function",
+                        "function": {"name": "test", "parameters": {"type": "object"}},
+                    }
+                ],
+                False,
+            )
+        finally:
+            client.close()
+        self.assertEqual(payload["max_completion_tokens"], 512)
+        self.assertNotIn("max_tokens", payload)
+        self.assertNotIn("temperature", payload)
+        self.assertEqual(payload["reasoning_effort"], "none")
+
+    def test_openai_config_ignores_legacy_llama_endpoint(self) -> None:
+        config_path = Path(__file__).resolve().parents[1] / "config" / "config.json"
+        with mock.patch.dict(
+            os.environ,
+            {"LLM_PROVIDER": "openai", "LLAMA_HOST": "127.0.0.1", "LLAMA_PORT": "8080"},
+            clear=True,
+        ):
+            config = load_config(config_path)
+        self.assertEqual(config.model.base_url, "https://api.openai.com/v1")
 
 
 class SecurityHelperTests(unittest.TestCase):

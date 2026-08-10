@@ -117,13 +117,14 @@ python -m assistant.main --config path/to/config.json
 
 The **desktop entry** (`thursday.desktop`) uses `run_with_llm.sh`: it opens a single app
 window at `http://127.0.0.1:5005` (focusing instead of duplicating), and when the last
-Thursday window closes it shuts down **both** the Thursday server and the llama.cpp
-server (owned, adopted, or orphaned) — nothing keeps running in the background.
+Thursday window closes it shuts down the Thursday server. With the optional local provider,
+it also stops the llama.cpp server it manages. The default desktop configuration uses OpenAI
+`gpt-5.6-luna` and requires `OPENAI_API_KEY` in `.env`.
 
 | Setting | Where | Notes |
 |---------|--------|--------|
 | LLM provider / model / keys | `.env` | See `.env.example` |
-| Local llama host/port | `.env` → `LLAMA_*` | Overrides config base URL |
+| Local llama host/port | `.env` → `LLAMA_*` | Used only when `LLM_PROVIDER=local` |
 | Web host/port | `.env` → `THURSDAY_HOST` / `THURSDAY_PORT` | Default `127.0.0.1:5005` |
 | API token | `.env` → `THURSDAY_API_TOKEN` | Optional; required for remote binds |
 | Tools / prompt / voice | `assistant/config/config.json` | Behavior |

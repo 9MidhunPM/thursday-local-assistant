@@ -1,4 +1,5 @@
 import { useCallback, useReducer, useState } from 'react'
+import { MotionConfig } from 'framer-motion'
 import Header from '@/components/Header'
 import ChatHistory from '@/components/ChatHistory'
 import Composer from '@/components/Composer'
@@ -9,6 +10,7 @@ import ConfirmBanner, { type ConfirmRequest } from '@/components/ConfirmBanner'
 import { useAudioEngine } from '@/hooks/useAudioEngine'
 import { useEventStream } from '@/hooks/useEventStream'
 import { useConversations } from '@/hooks/useConversations'
+import { useHealth } from '@/hooks/useHealth'
 import { chatReducer, initialState } from '@/state/chatReducer'
 import type { HistoryMessage } from '@/types'
 
@@ -28,6 +30,7 @@ export default function App() {
   })
 
   const audio = useAudioEngine()
+  const health = useHealth()
 
   const handleLoadConversation = useCallback(
     (_id: number, messages: HistoryMessage[]) => {
@@ -121,7 +124,8 @@ export default function App() {
   const busy = state.status === 'busy'
 
   return (
-    <>
+    <MotionConfig reducedMotion="user">
+      <div className="app-bg" />
       <Header
         status={state.status}
         ttsEnabled={ttsEnabled}
@@ -129,10 +133,16 @@ export default function App() {
         onClear={handleClear}
         onToggleLogs={() => setShowLogs((v) => !v)}
         onToggleSidebar={() => setSidebarOpen((v) => !v)}
+        health={health}
+        conversationCount={conversations.conversations.length}
       />
       <div className="app-container">
         <div className="chat-panel">
-          <ChatHistory items={state.items} registerAgentContent={audio.registerAgentContent} />
+          <ChatHistory
+            items={state.items}
+            registerAgentContent={audio.registerAgentContent}
+            onPrompt={busy ? undefined : handleSend}
+          />
           <VoiceVisualizer active={audio.isPlaying} analyserRef={audio.analyserRef} />
           <Composer disabled={busy} onSend={handleSend} ensureAudio={audio.ensureAudio} />
         </div>
@@ -150,6 +160,6 @@ export default function App() {
       />
       <LogsModal visible={showLogs} logs={state.logs} onClose={() => setShowLogs(false)} />
       <ConfirmBanner request={confirmReq} onResolved={() => setConfirmReq(null)} />
-    </>
+    </MotionConfig>
   )
 }

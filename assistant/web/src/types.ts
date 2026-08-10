@@ -26,6 +26,10 @@ export interface ToolItem extends BaseItem {
   status: ToolStatus
   args: string
   result?: string
+  errorText?: string
+  returnCode?: number | null
+  command?: string
+  durationMs?: number | null
 }
 
 export type ChatItem = UserItem | AgentItem | ThinkingItem | ToolItem

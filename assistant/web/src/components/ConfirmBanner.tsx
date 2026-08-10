@@ -38,46 +38,17 @@ export default function ConfirmBanner({ request, onResolved }: Props) {
   }
 
   return (
-    <div
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="confirm-title"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 1000,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'rgba(0,0,0,0.55)',
-        padding: 16,
-      }}
-    >
-      <div
-        style={{
-          maxWidth: 440,
-          width: '100%',
-          background: 'var(--bg-elevated, #1a1d24)',
-          border: '1px solid var(--border, #333)',
-          borderRadius: 12,
-          padding: 20,
-          boxShadow: '0 12px 40px rgba(0,0,0,0.45)',
-        }}
-      >
-        <h2 id="confirm-title" style={{ margin: '0 0 8px', fontSize: 16 }}>
+    <div className="confirm-overlay" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div className="confirm-card">
+        <h2 id="confirm-title" className="confirm-title">
           Confirm action
         </h2>
-        <p style={{ margin: '0 0 16px', opacity: 0.9, lineHeight: 1.45 }}>{request.prompt}</p>
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button type="button" disabled={busy} onClick={() => void respond(false)}>
+        <p className="confirm-body">{request.prompt}</p>
+        <div className="confirm-actions">
+          <button type="button" className="confirm-btn" disabled={busy} onClick={() => void respond(false)}>
             Deny
           </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void respond(true)}
-            style={{ fontWeight: 600 }}
-          >
+          <button type="button" className="confirm-btn primary" disabled={busy} onClick={() => void respond(true)}>
             Allow
           </button>
         </div>

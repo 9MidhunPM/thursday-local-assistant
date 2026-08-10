@@ -2,13 +2,14 @@
 # Thursday desktop app launcher (invoked by thursday.desktop).
 #
 # Behavior:
-#   1. Starts the local llama.cpp server if needed (local provider only).
+#   1. Uses the configured cloud model; llama.cpp starts only for an explicit
+#      legacy local-provider configuration.
 #   2. Starts the Thursday server (no auto-browser) if not already running.
 #   3. Opens exactly one app window at http://127.0.0.1:5005
 #      (focuses the existing window instead of opening a duplicate).
 #   4. Watches the window: when the last Thursday window is closed, the
-#      Thursday server is shut down and any llama.cpp server started here
-#      is killed too — nothing keeps running in the background.
+#      Thursday server is shut down. A legacy local llama.cpp process started
+#      here is also stopped — nothing keeps running in the background.
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -32,6 +33,11 @@ SERVER_PID=""   # set only if WE started the Thursday server
 APP_OPEN=0      # set once a Thursday window exists (user actually used the app)
 
 log() { echo "[thursday-app] $*"; }
+
+if [[ "$LLM_PROVIDER" == "openai" && -z "${OPENAI_API_KEY:-${LLM_API_KEY:-}}" ]]; then
+    log "OpenAI is selected but no API key is configured. Set OPENAI_API_KEY in $PROJECT_DIR/.env."
+    exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Cleanup: runs when the window closes or this script is terminated.

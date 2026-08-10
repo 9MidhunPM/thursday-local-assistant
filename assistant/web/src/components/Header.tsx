@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import type { ConnStatus } from '@/types'
+import type { HealthInfo } from '@/hooks/useHealth'
 
 interface Props {
   status: ConnStatus
@@ -8,19 +9,26 @@ interface Props {
   onClear: () => void
   onToggleLogs: () => void
   onToggleSidebar: () => void
+  health: HealthInfo
+  conversationCount: number
 }
 
 function statusInfo(status: ConnStatus): { text: string; dot: string; color: string } {
   switch (status) {
     case 'busy':
-      return { text: 'Thinking & Executing...', dot: 'busy', color: 'var(--warning-color)' }
+      return { text: 'Thinking…', dot: 'busy', color: 'var(--warning-color)' }
     case 'connecting':
-      return { text: 'Connecting...', dot: 'connecting', color: 'var(--text-dim)' }
+      return { text: 'Connecting…', dot: 'connecting', color: 'var(--text-dim)' }
     case 'reconnecting':
-      return { text: 'Reconnecting...', dot: 'connecting', color: 'var(--text-dim)' }
+      return { text: 'Reconnecting…', dot: 'connecting', color: 'var(--text-dim)' }
     default:
       return { text: 'Ready', dot: '', color: 'var(--success-color)' }
   }
+}
+
+function shortModel(name: string): string {
+  if (!name) return ''
+  return name.replace(/^.*[\\/]/, '').replace(/\.gguf$/i, '')
 }
 
 export default function Header({
@@ -30,8 +38,12 @@ export default function Header({
   onClear,
   onToggleLogs,
   onToggleSidebar,
+  health,
+  conversationCount,
 }: Props) {
   const { text, dot, color } = statusInfo(status)
+  const modelLabel = shortModel(health.model) || health.provider || (health.mode ? health.mode : '')
+
   return (
     <header>
       <div className="logo-container">
@@ -51,10 +63,22 @@ export default function Header({
           />
           <span>{text}</span>
         </div>
+        {modelLabel && (
+          <div className={`meta-badge${health.modelReady ? '' : ' starting'}`} title={`${health.provider} · ${health.model}`}>
+            <span className="meta-key">{health.mode || 'model'}</span>
+            <span className="meta-val">{modelLabel}</span>
+          </div>
+        )}
       </div>
       <div className="controls-container">
+        {conversationCount > 0 && (
+          <span className="meta-badge" title="Saved conversations">
+            <span className="meta-key">chats</span>
+            <span className="meta-val">{conversationCount}</span>
+          </span>
+        )}
         <button className="view-logs-btn" onClick={onToggleLogs}>
-          View Logs
+          Logs
         </button>
         <div className="toggle-container">
           <span>Voice</span>

@@ -295,6 +295,9 @@ class OpenAICompatibleClient:
         use_response_format: bool,
         stream: bool = False,
     ) -> dict[str, Any]:
+        openai_reasoning_model = self._provider == "openai" and (
+            str(self._model).startswith("o") or str(self._model).startswith("gpt-5")
+        )
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": [
@@ -327,12 +330,17 @@ class OpenAICompatibleClient:
                 }
                 for msg in messages
             ],
-            "temperature": self._temperature,
             "stream": stream,
         }
+        # GPT-5 and o-series Chat Completions requests only accept the default
+        # temperature. Omitting it preserves that default; sending the app's
+        # legacy 0.2 setting produces a 400 response.
+        if not openai_reasoning_model:
+            payload["temperature"] = self._temperature
         if self._max_tokens is not None:
-            # Newer OpenAI models prefer max_completion_tokens; most others use max_tokens.
-            if self._provider == "openai" and str(self._model).startswith("o"):
+            # OpenAI reasoning models and the GPT-5 family use this parameter;
+            # most OpenAI-compatible servers still expect max_tokens.
+            if openai_reasoning_model:
                 payload["max_completion_tokens"] = self._max_tokens
             else:
                 payload["max_tokens"] = self._max_tokens
@@ -341,6 +349,11 @@ class OpenAICompatibleClient:
             payload["tool_choice"] = "auto"
         if self._response_format and use_response_format:
             payload["response_format"] = {"type": self._response_format}
+        # GPT-5.6 Luna supports Chat Completions function tools only with
+        # reasoning disabled. Thursday keeps its own tool-execution loop, so
+        # the Responses API is not required for this compatibility path.
+        if self._provider == "openai" and str(self._model).startswith("gpt-5") and tools:
+            payload["reasoning_effort"] = "none"
         return payload
 
     def _parse_response(self, raw: dict[str, Any], elapsed: float = 0.0) -> LlmResponse:

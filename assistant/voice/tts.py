@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 import queue as _queue_mod
 import re
 import shlex
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -14,8 +16,9 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Any
 
-
 from assistant.voice.base import TextToSpeech
+
+_log = logging.getLogger("assistant.voice")
 
 
 class TTSQueuePriority(IntEnum):
@@ -67,15 +70,40 @@ class EdgeTTS(TextToSpeech):
 
     @staticmethod
     def _find_edge_tts() -> str:
+        # Prefer the edge-tts that sits next to the running Python interpreter
+        # (i.e. the venv bin), then fall back to PATH lookups.  A binary from
+        # ~/.local/bin may point at a different interpreter that lacks the
+        # edge_tts package, so we verify each candidate before returning it.
+        venv_bin = Path(sys.executable).parent
         candidates = [
+            str(venv_bin / "edge-tts"),
             shutil.which("edge-tts"),
-            os.path.expanduser("~/.local/bin/edge-tts"),
+            str(Path("~/.local/bin/edge-tts").expanduser()),
         ]
+        seen: set[str] = set()
         for candidate in candidates:
-            if candidate:
-                return candidate
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            if not shutil.which(candidate) and not Path(candidate).is_file():
+                continue
+            # Quick smoke test: ask edge-tts for its version.  If the binary
+            # can't even import its own package, skip it.
+            try:
+                probe = subprocess.run(
+                    [candidate, "--list-voices"],
+                    capture_output=True, text=True, timeout=15,
+                )
+                if probe.returncode == 0:
+                    return candidate
+                _log.warning(
+                    "edge-tts candidate %s failed (rc=%s): %s",
+                    candidate, probe.returncode, probe.stderr.strip()[:200],
+                )
+            except Exception as exc:
+                _log.warning("edge-tts candidate %s unusable: %s", candidate, exc)
         raise FileNotFoundError(
-            "edge-tts not found. Install it via: pip install edge-tts"
+            "edge-tts not found or not functional. Install it via: pip install edge-tts"
         )
 
     def _build_cmd(self, text: str, output_path: str | None = None) -> list[str]:
@@ -244,7 +272,7 @@ class EdgeTTS(TextToSpeech):
                     tts_cmd,
                     shell=True,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
                     preexec_fn=os.setsid,
                 )
                 with self._lock:
@@ -265,6 +293,12 @@ class EdgeTTS(TextToSpeech):
                 # Notify that audio is ready
                 if filepath.exists() and self._on_audio_ready:
                     self._on_audio_ready(filename, item.text)
+                else:
+                    stderr = proc.stderr.read().decode(errors="ignore") if proc.stderr else ""
+                    _log.warning(
+                        "TTS generation failed for %r (rc=%s): %s",
+                        item.text[:60], proc.returncode, stderr.strip()[:300],
+                    )
 
         finally:
             with self._lock:

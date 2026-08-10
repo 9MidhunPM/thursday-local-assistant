@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Thursday
+GenericName=AI Assistant
+Comment=OpenAI GPT-5.6 Luna assistant — opens the Web UI; closing the window stops the server
+Exec=/home/midhun/Coading/ThursdayV3/run_with_llm.sh
+Path=/home/midhun/Coading/ThursdayV3
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;ArtificialIntelligence;
+Keywords=Thursday;OpenAI;GPT;GPT-5.6;Luna;Assistant;Chat;JARVIS;
+StartupNotify=true
+StartupWMClass=Thursday

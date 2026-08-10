@@ -1,8 +1,8 @@
 {
   "model": {
-    "provider": "local",
-    "base_url": "http://127.0.0.1:8080",
-    "model": "Qwen3-4B",
+    "provider": "openai",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-5.6-luna",
     "temperature": 0.2,
     "max_tokens": 1024,
     "request_timeout_sec": 90,

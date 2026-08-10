@@ -40,12 +40,12 @@ def _resolve_path(value: str) -> str:
     return str(path)
 
 
-def _resolve_base_url(config_url: str) -> str:
-    """Allow env to override the model base URL (LLM_BASE_URL or LLAMA_*)."""
+def _resolve_base_url(config_url: str, provider: str) -> str:
+    """Resolve provider-specific model endpoints without leaking local overrides to cloud mode."""
     if os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL"):
         return (os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or "").rstrip("/")
-    host = os.getenv("LLAMA_HOST")
-    port = os.getenv("LLAMA_PORT")
+    host = os.getenv("LLAMA_HOST") if provider == "local" else None
+    port = os.getenv("LLAMA_PORT") if provider == "local" else None
     if host or port:
         host = host or "127.0.0.1"
         port = port or "8080"
@@ -211,7 +211,7 @@ def load_config(path: Path) -> AppConfig:
         provider = "local"
 
     config_base = model.get("base_url", "http://127.0.0.1:8080")
-    base_url = _resolve_base_url(config_base)
+    base_url = _resolve_base_url(config_base, provider)
     model_name = os.getenv("LLM_MODEL") or os.getenv("OPENAI_MODEL") or model.get("model", "local-model")
 
     context_budget = int(
