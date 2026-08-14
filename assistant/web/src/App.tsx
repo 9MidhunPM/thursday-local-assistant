@@ -43,6 +43,7 @@ export default function App() {
 
   useEventStream({
     dispatch,
+    onTtsPreparing: () => audio.prepareAudio(),
     onTtsAudio: (url, text) => audio.queueAudio(url, text),
     onTtsStop: () => {},
     onStopVisualizer: () => audio.stopVisualizer(),
@@ -143,7 +144,10 @@ export default function App() {
             registerAgentContent={audio.registerAgentContent}
             onPrompt={busy ? undefined : handleSend}
           />
-          <VoiceVisualizer active={audio.isPlaying} analyserRef={audio.analyserRef} />
+          <VoiceVisualizer
+            active={audio.isPlaying || audio.isPreparing}
+            analyserRef={audio.analyserRef}
+          />
           <Composer disabled={busy} onSend={handleSend} ensureAudio={audio.ensureAudio} />
         </div>
       </div>

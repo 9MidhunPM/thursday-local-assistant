@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import sys
+import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT))
@@ -24,18 +24,20 @@ class SmokeTests(unittest.TestCase):
             "open_app",
             "search_apps",
             "open_path",
+            "reveal_path",
             "web_search",
             "fetch_page",
+            "search_and_fetch",
+            "open_google_search",
+            "analyze_website",
             "read_file",
             "write_file",
             "search_files",
             "find_folders",
             "current_time",
             "current_date",
-            "system_info",
-            "battery_info",
-            "memory_usage",
-            "cpu_usage",
+            "system_status",
+            "system_monitor",
             "run_terminal_command",
             "store_preference",
             "get_preference",
@@ -50,6 +52,13 @@ class SmokeTests(unittest.TestCase):
             "spotify_play_playlist",
             "speak_text",
             "gmail_read",
+            "gmail_compose",
+            "summarize_inbox",
+            "calendar_agenda",
+            "calendar_create_event",
+            "calendar_update_event",
+            "watch_reels",
+            "stop_watching_reels",
         }
         missing = expected - tool_names
         self.assertFalse(missing, f"Missing tools: {missing}")

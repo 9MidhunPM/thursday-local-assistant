@@ -10,12 +10,14 @@ import sys
 import tempfile
 import threading
 import time
-import uuid
 import webbrowser
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from assistant.agent.confirm import confirm_broker
+from assistant.integrations.browser_bridge import browser_bridge
 from assistant.runtime import AssistantRuntime
 from assistant.security import (
     assert_bind_allowed,
@@ -145,6 +147,22 @@ server_thread: threading.Thread | None = None
 confirm_broker.set_broadcast(broadcaster.broadcast)
 
 
+def _public_agent_error(exc: Exception) -> str:
+    """Keep provider payloads and internal details out of the chat transcript."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status in {401, 403}:
+            return "Thursday could not authenticate with the configured AI provider."
+        if status == 429:
+            return "The AI provider is busy or has reached its usage limit. Please try again shortly."
+        if status >= 500:
+            return "The AI provider is temporarily unavailable. Please try again shortly."
+        return "Thursday could not complete that model request. Please retry."
+    if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
+        return "Thursday could not reach the AI provider. Please check the connection and retry."
+    return "Thursday hit an internal error. The technical details were logged."
+
+
 def _serialize_message(raw: dict[str, Any]) -> dict[str, Any]:
     """Convert a stored conversation message into the shape the UI expects."""
     item: dict[str, Any] = {"role": raw["role"], "content": raw.get("content")}
@@ -209,6 +227,10 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(b'{"error":"Unauthorized. Set Authorization: Bearer <THURSDAY_API_TOKEN>."}')
         return False
 
+    def _is_loopback_request(self) -> bool:
+        remote = self.client_address[0] if self.client_address else ""
+        return remote in {"127.0.0.1", "::1", "localhost"}
+
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -217,10 +239,11 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             "Access-Control-Allow-Headers",
             "Content-Type, Authorization, X-Thursday-Token",
         )
+        self.send_header("Access-Control-Allow-Private-Network", "true")
         self.end_headers()
 
     def do_GET(self) -> None:
-        from urllib.parse import urlparse, parse_qs
+        from urllib.parse import parse_qs, urlparse
         parsed = urlparse(self.path)
         parsed_path = parsed.path
         if parsed_path == "/" or parsed_path == "/index.html":
@@ -249,11 +272,35 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 "model": model_name,
                 "mode": mode,
             }
-            self.wfile.write(json.dumps(health_data).encode())
+            try:
+                self.wfile.write(json.dumps(health_data).encode())
+            except (BrokenPipeError, ConnectionResetError):
+                pass
             return
 
         if self.path == "/api/tools":
             self.handle_tools_request()
+            return
+
+        if parsed_path == "/api/browser-bridge/next":
+            if not self._is_loopback_request():
+                self.send_error(403, "Browser bridge is loopback-only")
+                return
+            command = browser_bridge.next_command(timeout=20)
+            if command is None:
+                self.send_response(204)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Private-Network", "true")
+                self.end_headers()
+                return
+            self._send_json(200, command)
+            return
+
+        if parsed_path == "/api/browser-bridge/status":
+            if not self._is_loopback_request():
+                self.send_error(403, "Browser bridge is loopback-only")
+                return
+            self._send_json(200, browser_bridge.status())
             return
 
         if parsed_path == "/api/events":
@@ -437,6 +484,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
         self.end_headers()
         self.wfile.write(json.dumps(payload).encode())
 
@@ -537,7 +585,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self._send_json(200, {"id": cid, "title": title.strip()[:100]})
 
     def do_DELETE(self) -> None:
-        from urllib.parse import urlparse, parse_qs
+        from urllib.parse import parse_qs, urlparse
         parsed = urlparse(self.path)
         parsed_path = parsed.path
         query = parse_qs(parsed.query)
@@ -566,7 +614,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self.send_error(404, "Not Found")
 
     def do_PATCH(self) -> None:
-        from urllib.parse import urlparse, parse_qs
+        from urllib.parse import parse_qs, urlparse
         parsed = urlparse(self.path)
         parsed_path = parsed.path
         query = parse_qs(parsed.query)
@@ -579,11 +627,35 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self.send_error(404, "Not Found")
 
     def do_POST(self) -> None:
-        from urllib.parse import urlparse, parse_qs
+        from urllib.parse import parse_qs, urlparse
         parsed = urlparse(self.path)
         parsed_path = parsed.path
         query = parse_qs(parsed.query)
         q_token = (query.get("token") or [None])[0]
+
+        if parsed_path == "/api/browser-bridge/result":
+            if not self._is_loopback_request():
+                self.send_error(403, "Browser bridge is loopback-only")
+                return
+            content_length = int(self.headers.get("Content-Length", 0))
+            if content_length <= 0 or content_length > 2_000_000:
+                self.send_error(400, "Invalid browser bridge result size")
+                return
+            try:
+                data = json.loads(self.rfile.read(content_length))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                self.send_error(400, "Invalid JSON")
+                return
+            command_id = str(data.get("id") or "")
+            result_data = data.get("data")
+            ok = browser_bridge.resolve(
+                command_id,
+                success=bool(data.get("success")),
+                data=result_data if isinstance(result_data, dict) else {},
+                error=str(data.get("error") or "") or None,
+            )
+            self._send_json(200 if ok else 404, {"ok": ok})
+            return
 
         # All mutating API routes require the optional shared token when configured.
         if parsed_path.startswith("/api/") and not self._require_auth(query_token=q_token):
@@ -720,7 +792,10 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         tts = server_runtime.tts if server_runtime and use_tts else None
         tts_buffer: list[str] = []
         tts_spoken_index = 0
+        tts_first_flush_done = False
         _tts_debounce_timer: threading.Timer | None = None
+        response_started_at = time.monotonic()
+        first_token_at: float | None = None
 
         # Auto-title the conversation from the first user message.
         if conversation_id is not None and server_runtime:
@@ -745,19 +820,33 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
         # Wire TTS audio callbacks to SSE
         if tts:
+            def _on_tts_speak_start() -> None:
+                broadcaster.broadcast("tts_preparing", {})
+                if server_runtime:
+                    server_runtime.loggers.model.info(
+                        "tts_preparing_ms=%s",
+                        round((time.monotonic() - response_started_at) * 1000),
+                    )
             def _on_tts_audio(filename: str, text: str) -> None:
                 global tts_active
                 tts_active = True
+                if server_runtime:
+                    server_runtime.loggers.model.info(
+                        "tts_audio_ready_ms=%s text_chars=%s",
+                        round((time.monotonic() - response_started_at) * 1000),
+                        len(text),
+                    )
                 broadcaster.broadcast("tts_audio", {"url": f"/api/audio/{filename}", "text": text})
             def _on_tts_speak_end() -> None:
                 global tts_active
                 tts_active = False
                 broadcaster.broadcast("tts_stop", {})
+            tts._on_speak_start = _on_tts_speak_start
             tts._on_audio_ready = _on_tts_audio
             tts._on_speak_end = _on_tts_speak_end
 
         def _flush_tts(force: bool = False) -> None:
-            nonlocal tts_spoken_index, _tts_debounce_timer
+            nonlocal tts_spoken_index, tts_first_flush_done, _tts_debounce_timer
             if _tts_debounce_timer:
                 _tts_debounce_timer.cancel()
                 _tts_debounce_timer = None
@@ -770,18 +859,27 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             clean = _re.sub(r"\[.*?\]\(.*?\)", "", clean)
             if clean.strip():
                 tts.speak_async(clean.strip())
+                tts_first_flush_done = True
             tts_spoken_index = len(tts_buffer)
 
         def _schedule_debounce() -> None:
             nonlocal _tts_debounce_timer
             if _tts_debounce_timer:
                 _tts_debounce_timer.cancel()
-            _tts_debounce_timer = threading.Timer(0.25, _flush_tts, kwargs={"force": True})
+            _tts_debounce_timer = threading.Timer(0.15, _flush_tts, kwargs={"force": True})
             _tts_debounce_timer.daemon = True
             _tts_debounce_timer.start()
 
         def on_stream(chunk: str) -> None:
+            nonlocal first_token_at
             broadcaster.broadcast("token", {"chunk": chunk})
+            if first_token_at is None and chunk.strip():
+                first_token_at = time.monotonic()
+                if server_runtime:
+                    server_runtime.loggers.model.info(
+                        "first_response_token_ms=%s",
+                        round((first_token_at - response_started_at) * 1000),
+                    )
             if tts:
                 tts_buffer.append(chunk)
                 acc = "".join(tts_buffer[tts_spoken_index:])
@@ -791,8 +889,15 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 has_boundary = _SENTENCE_END.search(acc)
                 is_long_enough = len(acc) >= 15
                 ends_with_newline = acc.rstrip().endswith('\n')
+                early_first_phrase = (
+                    not tts_first_flush_done
+                    and len(acc.strip()) >= 36
+                    and (acc[-1:].isspace() or len(acc.strip()) >= 64)
+                )
 
-                if has_boundary and is_long_enough and not _ABBREV_PATTERN.search(acc):
+                if early_first_phrase:
+                    _flush_tts()
+                elif has_boundary and is_long_enough and not _ABBREV_PATTERN.search(acc):
                     _flush_tts()
                 elif ends_with_newline and len(acc.strip()) > 10:
                     _flush_tts()
@@ -827,7 +932,9 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             else:
                 broadcaster.broadcast("error", {"content": "Agent runtime not initialized."})
         except Exception as exc:
-            broadcaster.broadcast("error", {"content": str(exc)})
+            if server_runtime:
+                server_runtime.loggers.error.exception("agent_request_failed")
+            broadcaster.broadcast("error", {"content": _public_agent_error(exc)})
         finally:
             if _tts_debounce_timer:
                 _tts_debounce_timer.cancel()

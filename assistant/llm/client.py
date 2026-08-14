@@ -13,7 +13,7 @@ import httpx
 @dataclass(frozen=True)
 class ChatMessage:
     role: str
-    content: str | None
+    content: str | list[dict[str, Any]] | None
     name: str | None = None
     tool_call_id: str | None = None
     tool_calls: list[ToolCall] | None = None
@@ -288,12 +288,29 @@ class OpenAICompatibleClient:
             return f"{base}/chat/completions"
         return f"{base}/v1/chat/completions"
 
+    @staticmethod
+    def _raise_for_status(response: httpx.Response) -> None:
+        if not response.is_error:
+            return
+        try:
+            response.read()
+            detail = response.text.strip()
+        except Exception:
+            detail = ""
+        suffix = f" Response: {detail[:1500]}" if detail else ""
+        raise httpx.HTTPStatusError(
+            f"{response.status_code} {response.reason_phrase} for {response.request.url}.{suffix}",
+            request=response.request,
+            response=response,
+        )
+
     def _build_payload(
         self,
         messages: list[ChatMessage],
         tools: list[dict[str, Any]] | None,
         use_response_format: bool,
         stream: bool = False,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         openai_reasoning_model = self._provider == "openai" and (
             str(self._model).startswith("o") or str(self._model).startswith("gpt-5")
@@ -352,8 +369,11 @@ class OpenAICompatibleClient:
         # GPT-5.6 Luna supports Chat Completions function tools only with
         # reasoning disabled. Thursday keeps its own tool-execution loop, so
         # the Responses API is not required for this compatibility path.
-        if self._provider == "openai" and str(self._model).startswith("gpt-5") and tools:
-            payload["reasoning_effort"] = "none"
+        if self._provider == "openai" and str(self._model).startswith("gpt-5"):
+            if tools:
+                payload["reasoning_effort"] = "none"
+            elif reasoning_effort:
+                payload["reasoning_effort"] = reasoning_effort
         return payload
 
     def _parse_response(self, raw: dict[str, Any], elapsed: float = 0.0) -> LlmResponse:
@@ -394,11 +414,17 @@ class OpenAICompatibleClient:
         messages: list[ChatMessage],
         tools: list[dict[str, Any]] | None = None,
         use_response_format: bool = True,
+        reasoning_effort: str | None = None,
     ) -> LlmResponse:
-        payload = self._build_payload(messages, tools, use_response_format)
+        payload = self._build_payload(
+            messages,
+            tools,
+            use_response_format,
+            reasoning_effort=reasoning_effort,
+        )
         start = time.perf_counter()
         response = self._client.post(self._chat_url(), json=payload)
-        response.raise_for_status()
+        self._raise_for_status(response)
         elapsed = time.perf_counter() - start
         return self._parse_response(response.json(), elapsed)
 
@@ -419,7 +445,7 @@ class OpenAICompatibleClient:
         start = time.perf_counter()
 
         with self._client.stream("POST", self._chat_url(), json=payload) as response:
-            response.raise_for_status()
+            self._raise_for_status(response)
             for line in response.iter_lines():
                 if not line or not line.startswith("data:"):
                     continue

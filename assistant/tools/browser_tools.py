@@ -5,6 +5,7 @@ import html
 import os
 import re
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,7 +13,8 @@ import httpx
 import trafilatura
 
 from assistant.tools.base import BaseTool, ToolMetadata
-from .spotify_tools import SpotifySearchPlayTool
+from assistant.tools.browser_control import BraveController
+from assistant.tools.website_analysis_tool import assert_public_url, normalize_public_url
 
 
 @dataclass
@@ -20,6 +22,46 @@ class SearchResult:
     title: str
     url: str
     snippet: str
+    provider: str = "unknown"
+
+
+def _canonical_result_url(url: str) -> str:
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except ValueError:
+        return url
+    query = urllib.parse.urlencode(
+        [
+            (key, value)
+            for key, value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+            if not key.casefold().startswith("utm_")
+            and key.casefold() not in {"fbclid", "gclid", "ref"}
+        ]
+    )
+    return urllib.parse.urlunsplit(
+        (parsed.scheme.casefold(), parsed.netloc.casefold(), parsed.path or "/", query, "")
+    )
+
+
+def _safe_provider_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code}"
+    if isinstance(exc, httpx.TimeoutException):
+        return "request timed out"
+    if isinstance(exc, httpx.RequestError):
+        return type(exc).__name__
+    return type(exc).__name__
+
+
+def _run_async(factory: Any) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(factory())
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(lambda: asyncio.run(factory())).result()
 
 
 class WebSearchTool(BaseTool):
@@ -137,6 +179,7 @@ class WebSearchTool(BaseTool):
                             title=r.get("title", r.get("snippet", "")[:80]),
                             url=r.get("url", ""),
                             snippet=r.get("snippet", ""),
+                            provider="duckduckgo",
                         )
                     )
         except Exception:
@@ -158,6 +201,7 @@ class WebSearchTool(BaseTool):
                             title=html.unescape(title.strip()),
                             url=url,
                             snippet="",
+                            provider="duckduckgo",
                         )
                     )
                 if len(results) >= self._max_results:
@@ -176,12 +220,9 @@ class WebSearchTool(BaseTool):
         }
         url = f"https://html.duckduckgo.com/html/?{urllib.parse.urlencode(params)}"
 
-        try:
-            response = await client.get(url)
-            response.raise_for_status()
-            return self._parse_results(response.text)
-        except Exception:
-            return []
+        response = await client.get(url)
+        response.raise_for_status()
+        return self._parse_results(response.text)
 
     # -----------------------------------------------------------------
     # Google Custom Search implementation
@@ -199,14 +240,11 @@ class WebSearchTool(BaseTool):
             "num": min(self._max_results, 10),  # API max 10 per request
             "safe": "off",
         }
-        try:
-            response = await client.get(
-                "https://www.googleapis.com/customsearch/v1", params=params
-            )
-            response.raise_for_status()
-            data = response.json()
-        except Exception:
-            return []
+        response = await client.get(
+            "https://www.googleapis.com/customsearch/v1", params=params
+        )
+        response.raise_for_status()
+        data = response.json()
 
         items = data.get("items", [])
         results: list[SearchResult] = []
@@ -215,7 +253,9 @@ class WebSearchTool(BaseTool):
             url = item.get("link", "")
             snippet = item.get("snippet", "")
             if title and url:
-                results.append(SearchResult(title=title, url=url, snippet=snippet))
+                results.append(
+                    SearchResult(title=title, url=url, snippet=snippet, provider="google_cse")
+                )
                 if len(results) >= self._max_results:
                     break
         return results
@@ -254,14 +294,11 @@ class WebSearchTool(BaseTool):
             # Default bearer token
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        try:
-            response = await client.get(
-                self.api_endpoint, headers=headers, params=params
-            )
-            response.raise_for_status()
-            data = response.json()
-        except Exception:
-            return []
+        response = await client.get(
+            self.api_endpoint, headers=headers, params=params
+        )
+        response.raise_for_status()
+        data = response.json()
 
         results: list[SearchResult] = []
 
@@ -276,7 +313,9 @@ class WebSearchTool(BaseTool):
                     url = item.get("link") or item.get("url") or ""
                     snippet = item.get("snippet") or item.get("description") or ""
                     if title and url:
-                        results.append(SearchResult(title=title, url=url, snippet=snippet))
+                        results.append(
+                            SearchResult(title=title, url=url, snippet=snippet, provider="generic")
+                        )
                         if len(results) >= self._max_results:
                             break
                 if results:
@@ -330,7 +369,9 @@ class WebSearchTool(BaseTool):
                     snippet = answer
                     if len(snippet) > 200:
                         snippet = snippet[:200] + "..."
-                    results.append(SearchResult(title=title, url=url, snippet=snippet))
+                    results.append(
+                        SearchResult(title=title, url=url, snippet=snippet, provider="generic")
+                    )
                     if len(results) >= self._max_results:
                         break
                 if results:
@@ -373,7 +414,9 @@ class WebSearchTool(BaseTool):
                 or ""
             )
             if title and url:
-                results.append(SearchResult(title=title, url=url, snippet=snippet))
+                results.append(
+                    SearchResult(title=title, url=url, snippet=snippet, provider="generic")
+                )
                 if len(results) >= self._max_results:
                     break
         return results
@@ -383,75 +426,78 @@ class WebSearchTool(BaseTool):
     # -----------------------------------------------------------------
     def execute(self, arguments: dict[str, Any], context: Any) -> dict[str, Any]:
         query = arguments.get("query", "").strip()
-        max_results = int(arguments.get("max_results", self._max_results))
+        max_results = max(1, min(int(arguments.get("max_results", self._max_results)), 10))
 
         if not query:
             return {"success": False, "error": "Query is required"}
 
-        # Determine which search to use: Google > Generic > DuckDuckGo
-        try:
-            loop = asyncio.get_running_loop()
-            # We're in an async context, run in executor with new loop
-            import concurrent.futures
+        providers: list[tuple[str, Any]] = []
+        if self.use_google:
+            providers.append(("google_cse", self._search_google))
+        if self.use_generic:
+            providers.append(("generic", self._search_generic))
+        providers.append(("duckduckgo", self._search_duckduckgo))
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                if self.use_google:
-                    future = executor.submit(
-                        lambda: asyncio.run(self._search_google(query))
-                    )
-                    results = future.result()
-                    if not results and self.use_generic:
-                        future = executor.submit(
-                            lambda: asyncio.run(self._search_generic(query))
+        async def search_with_fallback() -> tuple[list[SearchResult], str, list[dict[str, Any]]]:
+            attempts: list[dict[str, Any]] = []
+            try:
+                for provider_name, search in providers:
+                    try:
+                        candidate_results = await search(query)
+                        attempts.append(
+                            {
+                                "provider": provider_name,
+                                "status": "ok" if candidate_results else "no_results",
+                                "result_count": len(candidate_results),
+                            }
                         )
-                        results = future.result()
-                    if not results:
-                        future = executor.submit(
-                            lambda: asyncio.run(self._search_duckduckgo(query))
+                    except Exception as exc:  # noqa: BLE001 - sanitized below
+                        attempts.append(
+                            {
+                                "provider": provider_name,
+                                "status": "error",
+                                "error": _safe_provider_error(exc),
+                            }
                         )
-                        results = future.result()
-                elif self.use_generic:
-                    future = executor.submit(
-                        lambda: asyncio.run(self._search_generic(query))
-                    )
-                    results = future.result()
-                    if not results:
-                        future = executor.submit(
-                            lambda: asyncio.run(self._search_duckduckgo(query))
-                        )
-                        results = future.result()
-                else:
-                    future = executor.submit(
-                        lambda: asyncio.run(self._search_duckduckgo(query))
-                    )
-                    results = future.result()
-        except RuntimeError:
-            # No running loop, safe to use asyncio.run directly
-            if self.use_google:
-                results = asyncio.run(self._search_google(query))
-                if not results and self.use_generic:
-                    results = asyncio.run(self._search_generic(query))
-                if not results:
-                    results = asyncio.run(self._search_duckduckgo(query))
-            elif self.use_generic:
-                results = asyncio.run(self._search_generic(query))
-                if not results:
-                    results = asyncio.run(self._search_duckduckgo(query))
-            else:
-                results = asyncio.run(self._search_duckduckgo(query))
+                        continue
+                    if candidate_results:
+                        return candidate_results, provider_name, attempts
+                return [], "", attempts
+            finally:
+                await self.close()
+
+        results, chosen_provider, attempts = _run_async(search_with_fallback)
 
         if not results:
-            return {"success": False, "error": "No results found"}
+            return {
+                "success": False,
+                "error": "No search provider returned results.",
+                "attempts": attempts,
+            }
+
+        deduplicated: list[SearchResult] = []
+        seen_urls: set[str] = set()
+        for result in results:
+            canonical = _canonical_result_url(result.url)
+            if not canonical or canonical in seen_urls:
+                continue
+            seen_urls.add(canonical)
+            result.url = canonical
+            deduplicated.append(result)
 
         return {
             "success": True,
+            "query": query,
+            "provider": chosen_provider,
+            "attempts": attempts,
             "results": [
                 {
                     "title": r.title,
                     "url": r.url,
                     "snippet": r.snippet,
+                    "provider": r.provider,
                 }
-                for r in results[:max_results]
+                for r in deduplicated[:max_results]
             ],
         }
 
@@ -483,7 +529,7 @@ class FetchPageTool(BaseTool):
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                     "Accept-Language": "en-US,en;q=0.5",
                 },
-                follow_redirects=True,
+                follow_redirects=False,
             )
         return self._client
 
@@ -494,7 +540,21 @@ class FetchPageTool(BaseTool):
     async def _fetch_and_extract(self, url: str, max_chars: int = 8000) -> dict[str, Any]:
         client = await self._get_client()
         try:
-            response = await client.get(url)
+            current_url = url
+            for _ in range(6):
+                response = await client.get(current_url)
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        break
+                    current_url = normalize_public_url(
+                        urllib.parse.urljoin(str(response.url), location)
+                    )
+                    assert_public_url(current_url)
+                    continue
+                break
+            else:
+                return {"success": False, "error": "Too many redirects."}
             response.raise_for_status()
 
             html_content = response.text
@@ -543,7 +603,7 @@ class FetchPageTool(BaseTool):
 
             return {
                 "success": True,
-                "url": url,
+                "url": current_url,
                 "title": metadata.title if metadata and metadata.title else "",
                 "text": extracted,
                 "author": metadata.author if metadata else None,
@@ -554,28 +614,25 @@ class FetchPageTool(BaseTool):
             return {"success": False, "error": str(e)}
 
     def execute(self, arguments: dict[str, Any], context: Any) -> dict[str, Any]:
-        url = arguments.get("url", "").strip()
+        raw_url = arguments.get("url", "").strip()
         max_chars = int(arguments.get("max_chars", 8000))
 
-        if not url:
+        if not raw_url:
             return {"success": False, "error": "URL is required"}
 
-        if not url.startswith(("http://", "https://")):
-            return {"success": False, "error": "URL must start with http:// or https://"}
-
         try:
-            loop = asyncio.get_running_loop()
-            import concurrent.futures
+            url = normalize_public_url(raw_url)
+            assert_public_url(url)
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    lambda: asyncio.run(self._fetch_and_extract(url, max_chars))
-                )
-                result = future.result()
-        except RuntimeError:
-            result = asyncio.run(self._fetch_and_extract(url, max_chars))
+        async def fetch_once() -> dict[str, Any]:
+            try:
+                return await self._fetch_and_extract(url, max_chars)
+            finally:
+                await self.close()
 
-        return result
+        return _run_async(fetch_once)
 
 
 class SearchAndFetchTool(BaseTool):
@@ -597,10 +654,14 @@ class SearchAndFetchTool(BaseTool):
         self.fetch_chars = fetch_chars
         self.search_tool = WebSearchTool(max_results=max_results, timeout=timeout)
         self.fetch_tool = FetchPageTool(timeout=timeout)
+        self.timeout = timeout
+
+    def _new_fetch_tool(self) -> FetchPageTool:
+        return FetchPageTool(timeout=self.timeout)
 
     def execute(self, arguments: dict[str, Any], context: Any) -> dict[str, Any]:
         query = arguments.get("query", "").strip()
-        max_results = int(arguments.get("max_results", self.max_results))
+        max_results = max(1, min(int(arguments.get("max_results", self.max_results)), 5))
 
         if not query:
             return {"success": False, "error": "Query is required"}
@@ -614,38 +675,71 @@ class SearchAndFetchTool(BaseTool):
         if not results:
             return {"success": False, "error": "No search results found"}
 
-        # Fetch content for each result
-        enriched_results = []
-        for r in results:
-            fetch_result = self.fetch_tool.execute({"url": r["url"], "max_chars": self.fetch_chars}, context)
+        def enrich(r: dict[str, Any]) -> dict[str, Any]:
+            # Each worker owns its AsyncClient/event loop.
+            fetch_tool = self._new_fetch_tool()
+            fetch_result = fetch_tool.execute(
+                {"url": r["url"], "max_chars": self.fetch_chars}, context
+            )
             if fetch_result.get("success"):
-                enriched_results.append(
-                    {
-                        "title": fetch_result.get("title") or r["title"],
-                        "url": r["url"],
-                        "snippet": r["snippet"],
-                        "content": fetch_result.get("text", ""),
-                        "author": fetch_result.get("author"),
-                        "date": fetch_result.get("date"),
-                    }
-                )
-            else:
-                enriched_results.append(
-                    {
-                        "title": r["title"],
-                        "url": r["url"],
-                        "snippet": r["snippet"],
-                        "content": "",
-                        "error": fetch_result.get("error"),
-                    }
-                )
+                return {
+                    "title": fetch_result.get("title") or r["title"],
+                    "url": fetch_result.get("url") or r["url"],
+                    "snippet": r["snippet"],
+                    "content": fetch_result.get("text", ""),
+                    "author": fetch_result.get("author"),
+                    "date": fetch_result.get("date"),
+                    "provider": r.get("provider"),
+                }
+            return {
+                "title": r["title"],
+                "url": r["url"],
+                "snippet": r["snippet"],
+                "content": "",
+                "provider": r.get("provider"),
+                "error": fetch_result.get("error"),
+            }
+
+        workers = min(4, len(results))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            enriched_results = list(executor.map(enrich, results))
 
         return {
             "success": True,
             "query": query,
+            "provider": search_result.get("provider"),
+            "attempts": search_result.get("attempts", []),
             "results": enriched_results,
         }
 
 
+class OpenGoogleSearchTool(BaseTool):
+    metadata = ToolMetadata(
+        name="open_google_search",
+        description=(
+            "Open Google search results in the user's existing Brave window and bring Brave to focus. "
+            "Use only when the user asks to see or open Google results."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "Google search query."}},
+            "required": ["query"],
+        },
+    )
+
+    def __init__(self, controller: BraveController | None = None):
+        self.controller = controller or BraveController()
+
+    def execute(self, arguments: dict[str, Any], context: Any) -> dict[str, Any]:
+        query = str(arguments.get("query") or "").strip()
+        if not query:
+            return {"success": False, "error": "A Google search query is required."}
+        url = f"https://www.google.com/search?{urllib.parse.urlencode({'q': query})}"
+        opened, error = self.controller.open_url(url, title_hint="Google Search")
+        if not opened:
+            return {"success": False, "error": error or "Google could not be opened."}
+        return {"success": True, "query": query, "url": url, "output": "Google results opened in Brave."}
+
+
 def get_tools(config: Any | None = None) -> list[BaseTool]:
-    return [WebSearchTool(), FetchPageTool()]
+    return [WebSearchTool(), FetchPageTool(), SearchAndFetchTool(), OpenGoogleSearchTool()]

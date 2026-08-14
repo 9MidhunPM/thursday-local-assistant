@@ -10,12 +10,20 @@ def _tool_calls_to_dicts(tool_calls: list[Any] | None) -> list[dict[str, Any]] |
     if not tool_calls:
         return None
     out: list[dict[str, Any]] = []
-    for tc in tool_calls:
+    for index, tc in enumerate(tool_calls):
+        if isinstance(tc, dict):
+            call_id = tc.get("id") or f"call_{index}"
+            name = tc.get("name")
+            arguments = tc.get("arguments")
+        else:
+            call_id = getattr(tc, "id", None) or f"call_{index}"
+            name = getattr(tc, "name", None)
+            arguments = getattr(tc, "arguments", None)
         out.append(
             {
-                "id": getattr(tc, "id", None),
-                "name": getattr(tc, "name", None),
-                "arguments": getattr(tc, "arguments", None),
+                "id": call_id,
+                "name": name,
+                "arguments": arguments,
             }
         )
     return out
@@ -41,7 +49,7 @@ def _dict_to_message(raw: dict[str, Any]) -> Message:
                     args = {}
                 converted.append(
                     ToolCall(
-                        id=tc.get("id", f"call_{i}"),
+                        id=tc.get("id") or f"call_{i}",
                         name=tc.get("name", ""),
                         arguments=args,
                     )

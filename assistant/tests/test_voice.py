@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT))
@@ -22,6 +24,15 @@ class VoiceInterfaceTests(TestCase):
 
     def test_edge_tts_importable(self) -> None:
         self.assertTrue(issubclass(EdgeTTS, TextToSpeech))
+
+    @patch("assistant.voice.tts.subprocess.run")
+    def test_edge_tts_startup_probe_is_local_version_check(self, run) -> None:
+        run.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="edge-tts 7.2.8", stderr=""
+        )
+        binary = EdgeTTS._find_edge_tts()
+        self.assertTrue(binary.endswith("edge-tts"))
+        self.assertEqual(run.call_args.args[0][-1], "--version")
 
     def test_speech_recognition_stt_importable(self) -> None:
         self.assertTrue(issubclass(SpeechRecognitionSTT, SpeechToText))

@@ -10,6 +10,19 @@ from typing import Any
 from assistant.security import redact_secrets
 
 
+def redact_private_request_text(user_text: str) -> str:
+    """Avoid persisting email draft and inbox-analysis requests in logs."""
+    lowered = user_text.casefold()
+    email_context = any(word in lowered for word in ("email", "gmail", "mail"))
+    draft_action = any(word in lowered for word in ("compose", "draft", "send", "write"))
+    inbox_action = any(word in lowered for word in ("inbox", "summar", "triage", "recent"))
+    if email_context and draft_action:
+        return "[email draft request redacted]"
+    if email_context and inbox_action:
+        return "[email inbox request redacted]"
+    return user_text
+
+
 @dataclass(frozen=True)
 class Loggers:
     user: logging.Logger
@@ -108,9 +121,14 @@ def log_model_interaction(
     tool_calls: list[dict[str, Any]] | None = None,
 ) -> None:
     """Log model interaction with structured data."""
-    extra: dict[str, Any] = {"user_text": user_text}
+    extra: dict[str, Any] = {"user_text": redact_private_request_text(user_text)}
     if response:
-        extra["response"] = response
+        redacted_user = redact_private_request_text(user_text)
+        extra["response"] = (
+            "[private email response redacted]"
+            if redacted_user.startswith("[email ")
+            else response
+        )
     if tool_calls:
         extra["tool_calls"] = redact_secrets(tool_calls)
     logger.info("model_interaction", extra=extra)

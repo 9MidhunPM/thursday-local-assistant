@@ -98,6 +98,7 @@ export type AgentEvent =
   | { type: 'tool_chunk'; data: { tool: string; chunk: string } }
   | { type: 'tool_result'; data: ToolResultData }
   | { type: 'final_response'; data: { content: string } }
+  | { type: 'tts_preparing'; data: Record<string, never> }
   | { type: 'tts_audio'; data: { url: string; text: string } }
   | { type: 'tts_stop'; data: Record<string, never> }
   | { type: 'error'; data: { content: string } }

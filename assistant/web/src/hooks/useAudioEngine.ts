@@ -9,6 +9,7 @@ interface QueueItem {
 export function useAudioEngine() {
   const audioCtxRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
+  const sourceRef = useRef<AudioBufferSourceNode | null>(null)
   const queueRef = useRef<QueueItem[]>([])
   const isPlayingRef = useRef(false)
   const markInstanceRef = useRef<Mark | null>(null)
@@ -16,6 +17,7 @@ export function useAudioEngine() {
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isPreparing, setIsPreparing] = useState(false)
 
   const initAudio = useCallback(() => {
     try {
@@ -92,6 +94,7 @@ export function useAudioEngine() {
     const analyser = analyserRef.current!
     const item = queueRef.current.shift()!
     const source = ctx.createBufferSource()
+    sourceRef.current = source
     source.buffer = item.buffer
     source.connect(analyser)
 
@@ -112,6 +115,7 @@ export function useAudioEngine() {
     }
 
     source.onended = () => {
+      if (sourceRef.current === source) sourceRef.current = null
       isPlayingRef.current = false
       if (queueRef.current.length > 0) {
         playNextAudio()
@@ -127,16 +131,22 @@ export function useAudioEngine() {
   const queueAudio = useCallback(
     async (url: string, text: string) => {
       initAudio()
+      setIsPreparing(true)
       try {
         const response = await fetch(url)
         if (!response.ok) throw new Error('Failed to fetch audio')
         const arrayBuffer = await response.arrayBuffer()
         const ctx = audioCtxRef.current
-        if (!ctx) return
+        if (!ctx) {
+          setIsPreparing(false)
+          return
+        }
         const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
         queueRef.current.push({ buffer: audioBuffer, text })
+        setIsPreparing(false)
         playNextAudio()
       } catch (err) {
+        setIsPreparing(false)
         console.error('Audio playback error:', err)
       }
     },
@@ -145,8 +155,18 @@ export function useAudioEngine() {
 
   const stopAll = useCallback(() => {
     queueRef.current = []
+    if (sourceRef.current) {
+      try {
+        sourceRef.current.stop()
+        sourceRef.current.disconnect()
+      } catch {
+        /* already stopped */
+      }
+      sourceRef.current = null
+    }
     isPlayingRef.current = false
     setIsPlaying(false)
+    setIsPreparing(false)
     clearHighlight()
   }, [clearHighlight])
 
@@ -154,9 +174,21 @@ export function useAudioEngine() {
     initAudio()
   }, [initAudio])
 
+  const prepareAudio = useCallback(() => {
+    initAudio()
+    setIsPreparing(true)
+  }, [initAudio])
+
   useEffect(() => {
     return () => {
       if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
+      if (sourceRef.current) {
+        try {
+          sourceRef.current.stop()
+        } catch {
+          /* already stopped */
+        }
+      }
       try {
         audioCtxRef.current?.close()
       } catch {
@@ -167,11 +199,13 @@ export function useAudioEngine() {
 
   return {
     isPlaying,
+    isPreparing,
     analyserRef,
     queueAudio,
     stopAll,
     stopVisualizer,
     ensureAudio,
+    prepareAudio,
     registerAgentContent,
   }
 }

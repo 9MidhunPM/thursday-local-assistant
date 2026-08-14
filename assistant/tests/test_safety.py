@@ -51,6 +51,16 @@ class SafetyTests(unittest.TestCase):
         self.assertTrue(d.allowed)
         self.assertTrue(d.requires_confirmation)
 
+    def test_confirms_mutating_file_command(self) -> None:
+        d = _mgr(allow_shell=True).evaluate_command("mv report.txt archive/report.txt")
+        self.assertTrue(d.allowed)
+        self.assertTrue(d.requires_confirmation)
+
+    def test_confirms_output_redirection(self) -> None:
+        d = _mgr(allow_shell=True).evaluate_command("printf hello > note.txt")
+        self.assertTrue(d.allowed)
+        self.assertTrue(d.requires_confirmation)
+
 
 if __name__ == "__main__":
     unittest.main()

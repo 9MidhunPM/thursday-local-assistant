@@ -16,7 +16,7 @@ Thursday talks to any **OpenAI-compatible** endpoint (llama.cpp, OpenAI, OpenRou
 ## Features
 
 - 🧠 **Local or cloud LLM** — llama.cpp *or* API keys (OpenAI / OpenRouter / Groq / …)
-- 🛠️ **Tool-using agent** — files, apps, shell (guarded), web, Spotify, memory, voice, …
+- 🛠️ **Tool-using agent** — indexed whole-PC file search, Thunar reveal, guarded shell, source-backed web research, visual website reviews, Gmail drafts, Spotify, memory, voice, …
 - 💾 **Memory** — SQLite long-term + session history + automatic fact extraction
 - 🎯 **Smart tool filtering** — sends only relevant tools each turn (saves context)
 - 🎙️ **Voice** — Edge TTS + SpeechRecognition (optional)
@@ -213,6 +213,45 @@ Thursday can run shell commands and touch files on **your** machine.
 - Path tools use `read_roots` / `write_roots` (override with `THURSDAY_*_ROOTS`).
 - Shell policy: denylist + optional whitelist; dangerous actions can require **web confirmation**.
 - Power user: `THURSDAY_ALLOW_SHELL=true`, `THURSDAY_UNRESTRICTED_PATHS=1`.
+
+### Desktop integration packages (Arch Linux)
+
+Thursday uses `wtype` to drive Spotify's focused Wayland search UI and `plocate` for fast
+whole-PC filename searches:
+
+```bash
+sudo pacman -S --needed wtype plocate
+sudo systemctl enable --now plocate-updatedb.timer
+sudo systemctl start plocate-updatedb.service
+```
+
+Spotify commands only target an MPRIS player whose name contains `spotify`; another active
+player such as YouTube or mpv is never used as a fallback. File-search results are numbered,
+so follow-ups such as “open the second one” can reveal that file in Thunar.
+
+Website reviews use Python Playwright with the already-installed Brave binary. Calendar automation
+uses its visible persistent profile at `~/.local/share/thursday/browser-profile`; sign in once when
+Thursday opens it. Gmail and Instagram instead use the normal Brave profile. Drafting opens a
+populated unsent Gmail compose window and never activates Send. `summarize_inbox` uses the
+allow-listed local Brave helper to read the newest 20 inbox items without asking for a Gmail
+password, `watch_reels` advances only while Instagram is focused, and Calendar writes always show
+a confirmation first.
+
+Install Thursday's user-level `mailto:` handler to open populated Gmail drafts in normal Brave:
+
+```bash
+python -m assistant.integrations.mailto_handler --install
+```
+
+Install the default-Brave launcher that loads Thursday's Gmail helper:
+
+```bash
+install -Dm644 desktop/brave-browser.desktop ~/.local/share/applications/brave-browser.desktop
+```
+
+After installation, inbox checks start Brave automatically when it is closed and reuse an existing
+Gmail tab/helper connection when it is open. Repeated summary requests are serialized, so they do
+not create duplicate Gmail tabs or race while reading the inbox.
 
 ---
 

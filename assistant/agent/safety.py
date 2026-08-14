@@ -56,6 +56,12 @@ DEFAULT_CONFIRM = [
     r"(?i)\bpkill\b",
     r"(?i)\bchmod\b",
     r"(?i)\bchown\b",
+    r"(?i)(?:^|[;&|]\s*)(rm|mv|cp|install|mkdir|rmdir|touch|ln)\b",
+    r"(?i)\b(pacman|yay|paru)\b.*(?:^|\s)(-[SRU]|--remove|--upgrade)\b",
+    r"(?i)\bsystemctl\s+(start|stop|restart|enable|disable|mask|unmask)\b",
+    r"(?i)\b(sed|perl)\b[^\n]*\s-i(?:\s|$)",
+    r"(?i)\bgit\s+(commit|clean|rebase|merge)\b",
+    r"(?<!<)>{1,2}",
 ]
 
 

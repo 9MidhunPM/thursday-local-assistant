@@ -96,6 +96,12 @@ def redact_secrets(data: Any) -> Any:
         "refresh_token",
         "private_key",
         "client_secret",
+        # Email drafts are private even though they are not authentication secrets.
+        "recipient",
+        "subject",
+        "body",
+        "cc",
+        "bcc",
     }
     if isinstance(data, dict):
         out: dict[Any, Any] = {}

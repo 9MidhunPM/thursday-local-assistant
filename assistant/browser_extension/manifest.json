@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Thursday Main Profile Helper",
+  "version": "1.0.3",
+  "description": "Lets Thursday automate allow-listed tasks in the user's normal Brave profile.",
+  "host_permissions": [
+    "http://127.0.0.1:5005/*",
+    "https://mail.google.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["gmail_content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["bridge_frame.html", "bridge_frame.js"],
+      "matches": ["https://mail.google.com/*"]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src http://127.0.0.1:5005"
+  }
+}

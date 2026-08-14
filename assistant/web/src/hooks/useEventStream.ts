@@ -5,6 +5,7 @@ import type { ChatAction } from '@/state/chatReducer'
 interface Options {
   dispatch: (action: ChatAction) => void
   onTtsAudio: (url: string, text: string) => void
+  onTtsPreparing: () => void
   onTtsStop: () => void
   onStopVisualizer: () => void
   onInitConversation: (id: number | null) => void
@@ -17,6 +18,7 @@ interface Options {
 export function useEventStream({
   dispatch,
   onTtsAudio,
+  onTtsPreparing,
   onTtsStop,
   onStopVisualizer,
   onInitConversation,
@@ -33,6 +35,7 @@ export function useEventStream({
   const cb = useRef({
     dispatch,
     onTtsAudio,
+    onTtsPreparing,
     onTtsStop,
     onStopVisualizer,
     onInitConversation,
@@ -44,6 +47,7 @@ export function useEventStream({
   cb.current = {
     dispatch,
     onTtsAudio,
+    onTtsPreparing,
     onTtsStop,
     onStopVisualizer,
     onInitConversation,
@@ -61,6 +65,7 @@ export function useEventStream({
       const {
         dispatch: d,
         onTtsAudio: audio,
+        onTtsPreparing: prepareAudio,
         onTtsStop: stop,
         onStopVisualizer: stopVis,
         onInitConversation: initConv,
@@ -109,6 +114,9 @@ export function useEventStream({
           break
         case 'tts_audio':
           audio(event.data.url, event.data.text)
+          break
+        case 'tts_preparing':
+          prepareAudio()
           break
         case 'tts_stop':
           stop()

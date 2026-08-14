@@ -7,8 +7,8 @@ from dotenv import load_dotenv
 
 from .agent.agent import Agent, AgentConfig
 from .config import AppConfig, load_config
-from .logging_utils import Loggers, setup_logging
 from .llm.client import LlamaCppClient, build_llm_client
+from .logging_utils import Loggers, setup_logging
 from .memory.conversation_store import ConversationStore
 from .memory.long_term import LongTermMemory
 from .memory.session import SessionMemory
@@ -67,6 +67,11 @@ class AssistantRuntime:
 
     def shutdown(self) -> None:
         """Gracefully shutdown the runtime components."""
+        from .tools.reels_tool import stop_reels_watcher
+        from .tools.ui_automation import shutdown_browser_automation
+
+        stop_reels_watcher()
+        shutdown_browser_automation()
         if self.llm:
             self.llm.close()
         if self.tts:

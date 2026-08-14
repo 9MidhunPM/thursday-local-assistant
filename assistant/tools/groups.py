@@ -28,6 +28,7 @@ TOOL_GROUPS: dict[str, str] = {
     "find_folders": "files",
     "find_file_system": "files",
     "open_path": "files",
+    "reveal_path": "files",
     "move_file": "files",
     "delete_file": "files",
     # Apps
@@ -38,6 +39,9 @@ TOOL_GROUPS: dict[str, str] = {
     # Web
     "web_search": "web",
     "fetch_page": "web",
+    "search_and_fetch": "web",
+    "open_google_search": "web",
+    "analyze_website": "web",
     "news": "web",
     "youtube_search": "web",
     "youtube_play": "web",
@@ -74,9 +78,16 @@ TOOL_GROUPS: dict[str, str] = {
     "speak_text": "voice",
     "valorant_stats": "gaming",
     "gmail_read": "email",
+    "gmail_compose": "email",
+    "summarize_inbox": "email",
+    "calendar_agenda": "calendar",
+    "calendar_create_event": "calendar",
+    "calendar_update_event": "calendar",
+    "watch_reels": "social",
+    "stop_watching_reels": "social",
 }
 
-ALWAYS_ON_GROUPS = frozenset({"core", "memory", "utility"})
+ALWAYS_ON_GROUPS = frozenset({"core", "memory", "utility", "terminal"})
 
 # Keyword → groups to include for this turn (union with ALWAYS_ON).
 KEYWORD_GROUPS: list[tuple[tuple[str, ...], frozenset[str]]] = [
@@ -85,7 +96,17 @@ KEYWORD_GROUPS: list[tuple[tuple[str, ...], frozenset[str]]] = [
         frozenset({"files"}),
     ),
     (
-        ("open", "launch", "app", "application", "firefox", "browser", "code", "vscode", "terminal"),
+        (
+            "open",
+            "launch",
+            "app",
+            "application",
+            "firefox",
+            "browser",
+            "code",
+            "vscode",
+            "terminal",
+        ),
         frozenset({"apps", "files"}),
     ),
     (
@@ -93,7 +114,20 @@ KEYWORD_GROUPS: list[tuple[tuple[str, ...], frozenset[str]]] = [
         frozenset({"media"}),
     ),
     (
-        ("search", "google", "web", "internet", "news", "wikipedia", "url", "http", "browse"),
+        (
+            "search",
+            "google",
+            "web",
+            "website",
+            "site",
+            "portfolio",
+            "internet",
+            "news",
+            "wikipedia",
+            "url",
+            "http",
+            "browse",
+        ),
         frozenset({"web"}),
     ),
     (
@@ -117,8 +151,16 @@ KEYWORD_GROUPS: list[tuple[tuple[str, ...], frozenset[str]]] = [
         frozenset({"voice"}),
     ),
     (
-        ("mail", "email", "gmail", "inbox"),
+        ("mail", "email", "gmail", "inbox", "compose", "recipient"),
         frozenset({"email"}),
+    ),
+    (
+        ("calendar", "schedule", "agenda", "meeting", "appointment", "event"),
+        frozenset({"calendar"}),
+    ),
+    (
+        ("instagram", "reel", "reels"),
+        frozenset({"social"}),
     ),
     (
         ("valorant", "game", "rank", "rr "),

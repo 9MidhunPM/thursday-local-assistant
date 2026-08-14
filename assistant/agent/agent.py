@@ -1,20 +1,28 @@
 from __future__ import annotations
 
+import base64
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
-from concurrent.futures import ThreadPoolExecutor
 
 from assistant.agent.confirm import confirm_broker
 from assistant.agent.context import ExecutionContext
 from assistant.llm.client import ChatMessage, LlamaCppClient, LlmResponse, ToolCall
 from assistant.llm.parser import InvalidModelOutput
+from assistant.logging_utils import (
+    Loggers,
+    log_model_interaction,
+    log_tool_call,
+    log_tool_result,
+    redact_private_request_text,
+)
 from assistant.memory.long_term import LongTermMemory
 from assistant.memory.short_term import Message, ShortTermMemory
-from assistant.tools.registry import ToolRegistry
 from assistant.tools.groups import filter_tools_payload
-from assistant.logging_utils import Loggers, log_tool_call, log_tool_result, log_model_interaction
+from assistant.tools.registry import ToolRegistry
 
 
 def _tc_field_safe(tc: Any, field: str, default: Any = None) -> Any:
@@ -22,6 +30,18 @@ def _tc_field_safe(tc: Any, field: str, default: Any = None) -> Any:
     if isinstance(tc, dict):
         return tc.get(field, default)
     return getattr(tc, field, default)
+
+
+def _is_retry_follow_up(text: str) -> bool:
+    normalized = " ".join((text or "").casefold().split()).strip(".!?")
+    return normalized in {
+        "again",
+        "do it again",
+        "retry",
+        "retry now",
+        "try again",
+        "try again now",
+    }
 
 
 @dataclass(frozen=True)
@@ -70,13 +90,27 @@ class Agent:
         on_tool_chunk: Callable[[str, str], None] | None = None,
         on_tool_result: Callable[[dict[str, Any]], None] | None = None,
     ) -> str:
-        self._loggers.user.info(user_text)
+        self._loggers.user.info(redact_private_request_text(user_text))
         self._short_term.add(Message(role="user", content=user_text))
 
         # Cache a per-turn filtered tool list for smarter / smaller prompts.
+        selection_text = user_text
+        if _is_retry_follow_up(user_text):
+            # A terse retry must keep the domain tool from the failed request.
+            # Scan past earlier retry-only turns (which may have selected only
+            # always-on tools) to the last substantive user instruction.
+            for message in reversed(self._short_term.as_list()[:-1]):
+                if (
+                    message.role == "user"
+                    and isinstance(message.content, str)
+                    and message.content.strip()
+                    and not _is_retry_follow_up(message.content)
+                ):
+                    selection_text = f"{message.content}\n{user_text}"
+                    break
         turn_tools = filter_tools_payload(
             self._tools_payload,
-            user_text,
+            selection_text,
             enabled_groups=list(self._config.enabled_tool_groups) or None,
             smart=self._config.smart_tool_filter,
         )
@@ -108,7 +142,7 @@ class Agent:
                     on_tool_call(tc.name, tc.arguments)
                 log_tool_call(self._loggers.tool, tc.name, tc.arguments)
 
-            results = self._execute_tools_parallel(tool_calls)
+            results = self._execute_tools_parallel(tool_calls, on_tool_chunk)
 
             for tc, tool_result in zip(tool_calls, results):
                 if on_tool_result:
@@ -120,9 +154,52 @@ class Agent:
                     tool_result,
                     tool_result.get("error"),
                 )
-                tool_content = json.dumps(tool_result, ensure_ascii=True)
-                # Truncate large tool outputs; keep a bit more on cloud models.
-                max_tool_chars = 2000 if not getattr(self._llm, "is_local", True) else 1200
+                if tc.name == "find_file_system":
+                    output = tool_result.get("output")
+                    if isinstance(output, dict):
+                        compact_output = {
+                            "query": output.get("query"),
+                            "source": output.get("source"),
+                            "results": [
+                                {
+                                    "index": item.get("index"),
+                                    "type": item.get("type"),
+                                    "path": item.get("path"),
+                                }
+                                for item in output.get("results", [])
+                                if isinstance(item, dict)
+                            ],
+                            "result_count": output.get("result_count"),
+                            "truncated": output.get("truncated"),
+                            **({"warning": output["warning"]} if output.get("warning") else {}),
+                        }
+                        model_result = {
+                            "tool": tool_result.get("tool"),
+                            "success": tool_result.get("success", False),
+                            "output": compact_output,
+                        }
+                    else:
+                        model_result = tool_result
+                    max_tool_chars = 6000
+                elif tc.name == "analyze_website":
+                    model_result = {
+                        "tool": tool_result.get("tool"),
+                        "success": tool_result.get("success", False),
+                        "url": tool_result.get("url"),
+                        "final_url": tool_result.get("final_url"),
+                        "page_title": tool_result.get("page_title"),
+                        "viewports": tool_result.get("viewports"),
+                        "analysis": tool_result.get("analysis"),
+                        **({"error": tool_result["error"]} if tool_result.get("error") else {}),
+                    }
+                    max_tool_chars = 8000
+                elif tc.name == "search_and_fetch":
+                    model_result = tool_result
+                    max_tool_chars = 12000 if not getattr(self._llm, "is_local", True) else 4000
+                else:
+                    model_result = tool_result
+                    max_tool_chars = 2000 if not getattr(self._llm, "is_local", True) else 1200
+                tool_content = json.dumps(model_result, ensure_ascii=True)
                 if len(tool_content) > max_tool_chars:
                     tool_content = tool_content[:max_tool_chars] + "... [TRUNCATED]"
                 self._short_term.add(
@@ -133,6 +210,30 @@ class Agent:
                         tool_call_id=tc.id,
                     )
                 )
+
+            # WebsiteAnalysisTool's nested vision request already produces a
+            # complete user-facing audit. Returning it directly is both more
+            # reliable and faster than asking the outer model to paraphrase it.
+            if len(tool_calls) == 1 and tool_calls[0].name == "analyze_website":
+                analysis = results[0].get("analysis") if results else None
+                if results and results[0].get("success") and isinstance(analysis, str):
+                    final_analysis = analysis.strip()
+                    if final_analysis:
+                        self._short_term.add(Message(role="assistant", content=final_analysis))
+                        log_model_interaction(self._loggers.model, user_text, final_analysis)
+                        self._maybe_extract(user_text, final_analysis)
+                        return final_analysis
+
+            # The nested private summarizer already returns the final inbox
+            # brief. Avoid a second model pass that could distort it.
+            if len(tool_calls) == 1 and tool_calls[0].name == "summarize_inbox":
+                summary = results[0].get("summary") if results else None
+                if results and results[0].get("success") and isinstance(summary, str):
+                    final_summary = summary.strip()
+                    if final_summary:
+                        self._short_term.add(Message(role="assistant", content=final_summary))
+                        log_model_interaction(self._loggers.model, user_text, final_summary)
+                        return final_summary
 
         final = (
             "I hit the tool-step limit before finishing. "
@@ -166,10 +267,86 @@ class Agent:
     # ------------------------------------------------------------------ context budget
 
     @staticmethod
-    def _estimate_tokens(text: str | None) -> int:
-        if not text:
+    def _estimate_tokens(content: str | list[dict[str, Any]] | None) -> int:
+        if not content:
             return 0
-        return len(text) // 4 + 4
+        if isinstance(content, str):
+            return len(content) // 4 + 4
+        # Image token use is model-dependent. This conservative fixed allowance
+        # is only used by transient vision calls, not stored conversation history.
+        text_chars = sum(
+            len(str(part.get("text", "")))
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+        image_count = sum(
+            1
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "image_url"
+        )
+        return text_chars // 4 + image_count * 1200 + 4
+
+    def _analyze_images(self, prompt: str, image_paths: list[Path]) -> str:
+        if self._llm.is_local:
+            raise RuntimeError(
+                "Website visual analysis requires a configured image-capable cloud model."
+            )
+        parts: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for path in image_paths:
+            image_bytes = path.read_bytes()
+            if len(image_bytes) > 10 * 1024 * 1024:
+                raise RuntimeError(f"Screenshot is too large to analyze: {path.name}")
+            mime = "image/jpeg" if path.suffix.casefold() in {".jpg", ".jpeg"} else "image/png"
+            encoded = base64.b64encode(image_bytes).decode("ascii")
+            parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime};base64,{encoded}",
+                        "detail": "high",
+                    },
+                }
+            )
+        response = self._llm.chat(
+            [
+                ChatMessage(
+                    role="system",
+                    content=(
+                        "You are Thursday's website reviewer. Base every observation on the "
+                        "provided screenshots and extracted page evidence. Clearly label anything "
+                        "that cannot be verified."
+                    ),
+                ),
+                ChatMessage(role="user", content=parts),
+            ],
+            tools=None,
+            use_response_format=False,
+            reasoning_effort="none",
+        )
+        if not response.content:
+            raise RuntimeError("The vision model returned an empty website review.")
+        return response.content.strip()
+
+    def _summarize_private_text(self, prompt: str) -> str:
+        response = self._llm.chat(
+            [
+                ChatMessage(
+                    role="system",
+                    content=(
+                        "You summarize private inbox content for its owner. Use only the supplied "
+                        "email evidence, retain exact dates and requested actions, do not invent "
+                        "facts, and do not reveal internal message identifiers."
+                    ),
+                ),
+                ChatMessage(role="user", content=prompt),
+            ],
+            tools=None,
+            use_response_format=False,
+            reasoning_effort="none",
+        )
+        if not response.content:
+            raise RuntimeError("The model returned an empty inbox summary.")
+        return response.content.strip()
 
     def _estimate_messages_tokens(
         self, messages: list[ChatMessage], tools: list[dict[str, object]] | None
@@ -334,18 +511,40 @@ class Agent:
 
     # ------------------------------------------------------------------ tools
 
-    def _execute_tools_parallel(self, tool_calls: list[ToolCall]) -> list[dict[str, Any]]:
+    def _execute_tools_parallel(
+        self,
+        tool_calls: list[ToolCall],
+        on_tool_chunk: Callable[[str, str], None] | None = None,
+    ) -> list[dict[str, Any]]:
         if not tool_calls:
             return []
         if len(tool_calls) == 1:
-            return [self._execute_tool(tool_calls[0].name, tool_calls[0].arguments)]
+            return [
+                self._execute_tool(
+                    tool_calls[0].name,
+                    tool_calls[0].arguments,
+                    on_tool_chunk,
+                )
+            ]
         workers = min(len(tool_calls), max(1, self._config.max_parallel_tools))
         if workers <= 1:
-            return [self._execute_tool(tc.name, tc.arguments) for tc in tool_calls]
+            return [
+                self._execute_tool(tc.name, tc.arguments, on_tool_chunk) for tc in tool_calls
+            ]
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            return list(ex.map(lambda tc: self._execute_tool(tc.name, tc.arguments), tool_calls))
+            return list(
+                ex.map(
+                    lambda tc: self._execute_tool(tc.name, tc.arguments, on_tool_chunk),
+                    tool_calls,
+                )
+            )
 
-    def _execute_tool(self, tool_name: str | None, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _execute_tool(
+        self,
+        tool_name: str | None,
+        arguments: dict[str, Any],
+        on_tool_chunk: Callable[[str, str], None] | None = None,
+    ) -> dict[str, Any]:
         if not tool_name:
             return {"tool": "unknown", "success": False, "error": "Tool name missing."}
 
@@ -366,6 +565,13 @@ class Agent:
             loggers=self._loggers,
             memory=self._memory,
             now=lambda: datetime.now(timezone.utc),
+            analyze_images=self._analyze_images,
+            summarize_private_text=self._summarize_private_text,
+            report_progress=(
+                (lambda chunk: on_tool_chunk(tool_name, chunk))
+                if on_tool_chunk is not None
+                else None
+            ),
         )
         log_tool_call(self._loggers.tool, tool_name, arguments)
         try:

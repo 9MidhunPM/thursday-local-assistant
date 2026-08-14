@@ -11,7 +11,7 @@ import httpx
 @dataclass(frozen=True)
 class ChatMessage:
     role: str
-    content: str | None
+    content: str | list[dict[str, Any]] | None
     name: str | None = None
     tool_call_id: str | None = None
     tool_calls: list[ToolCall] | None = None

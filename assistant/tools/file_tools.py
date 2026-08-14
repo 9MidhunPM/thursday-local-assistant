@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,59 @@ def _default_directory_path(path: str | None) -> str:
     if not isinstance(path, str) or not path.strip():
         return str(Path.home())
     return path
+
+
+def _search_words(value: str) -> list[str]:
+    stop_words = {
+        "my",
+        "the",
+        "a",
+        "an",
+        "find",
+        "search",
+        "for",
+        "file",
+        "folder",
+        "where",
+        "is",
+        "me",
+    }
+    words = [word for word in re.findall(r"[\w.-]+", value.casefold()) if word not in stop_words]
+    return words or [value.strip().casefold()]
+
+
+def _path_result(path: Path, index: int) -> dict[str, Any]:
+    try:
+        is_dir = path.is_dir()
+    except OSError:
+        is_dir = False
+    return {
+        "index": index,
+        "name": path.name or str(path),
+        "type": "folder" if is_dir else "file",
+        "path": str(path),
+        "parent": str(path.parent),
+    }
+
+
+def _result_rank(path: Path, words: list[str]) -> tuple[int, int, int, str]:
+    name = path.name.casefold()
+    stem = path.stem.casefold()
+    phrase = " ".join(words)
+    if name == phrase or stem == phrase:
+        match_rank = 0
+    elif name.startswith(phrase) or stem.startswith(phrase):
+        match_rank = 1
+    elif all(word in name for word in words):
+        match_rank = 2
+    else:
+        match_rank = 3
+    try:
+        path.relative_to(Path.home())
+        home_rank = 0
+    except ValueError:
+        home_rank = 1
+    return (match_rank, home_rank, len(path.parts), str(path).casefold())
 
 
 def _resolve_case_insensitive(path: Path) -> Path:
@@ -391,22 +446,73 @@ class OpenFileOrFolderTool(BaseTool):
         if not target.exists():
             return {"success": False, "error": "Path not found."}
         
-        if target.is_dir() and shutil.which("hyprctl") and shutil.which("thunar"):
-            subprocess.run(
-                ["hyprctl", "dispatch", "exec", f"thunar {target}"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            return {"success": True, "output": f"Opened {target} in Thunar."}
+        command: list[str] | None = None
+        app_name = "the default application"
+        if target.is_dir() and shutil.which("thunar"):
+            command = ["thunar", "--window", str(target)]
+            app_name = "Thunar"
         elif shutil.which("xdg-open"):
-            subprocess.Popen(
-                ["xdg-open", str(target)],
+            command = ["xdg-open", str(target)]
+        if command:
+            process = subprocess.Popen(
+                command,
                 start_new_session=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            return {"success": True, "output": f"Opened {target}."}
+            time.sleep(0.2)
+            return_code = process.poll()
+            if return_code not in (None, 0):
+                return {"success": False, "error": f"{app_name} failed to open."}
+            return {"success": True, "output": f"Opened {target} in {app_name}."}
         return {"success": False, "error": "No default application found (xdg-open missing)."}
+
+
+@dataclass
+class RevealPathTool(BaseTool):
+    config: ToolConfig
+    metadata: ToolMetadata = ToolMetadata(
+        name="reveal_path",
+        description=(
+            "Reveal a selected file in Thunar, or open a selected folder in Thunar. "
+            "Use after the user chooses one of the numbered file-search results."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
+    )
+
+    def execute(self, arguments: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
+        path = arguments.get("path")
+        if not isinstance(path, str) or not path.strip():
+            return {"success": False, "error": "Path is required."}
+        target = _resolve_path(path, self.config.read_roots)
+        if not target.exists():
+            return {"success": False, "error": "Path not found."}
+        if not shutil.which("thunar"):
+            return {"success": False, "error": "Thunar is not installed."}
+
+        folder = target if target.is_dir() else target.parent
+        command = ["thunar", "--window", str(folder)]
+        process = subprocess.Popen(
+            command,
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(0.3)
+        if process.poll() not in (None, 0):
+            return {
+                "success": False,
+                "error": "Thunar could not open the selected path's folder.",
+            }
+        return {
+            "success": True,
+            "output": f"Opened {folder} in Thunar for {target}.",
+            "path": str(target),
+        }
 
 
 @dataclass
@@ -414,7 +520,10 @@ class FindFileSystemTool(BaseTool):
     config: ToolConfig
     metadata: ToolMetadata = ToolMetadata(
         name="find_file_system",
-        description="Search the entire system for a specific file or folder. Handles typos via fuzzy matching.",
+        description=(
+            "Search the entire computer for files or folders by name. Returns numbered results; "
+            "use reveal_path after the user chooses one."
+        ),
         parameters={
             "type": "object",
             "properties": {
@@ -427,44 +536,79 @@ class FindFileSystemTool(BaseTool):
 
     def execute(self, arguments: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
         filename = arguments.get("filename")
-        max_results = int(arguments.get("max_results", 20))
-        if not isinstance(filename, str):
+        max_results = max(1, min(int(arguments.get("max_results", 50)), 200))
+        if not isinstance(filename, str) or not filename.strip():
             return {"success": False, "error": "Filename is required."}
-            
-        # Generalize the search by removing common stop words
-        stop_words = {"my", "the", "a", "an", "find", "search", "for", "file", "folder", "where", "is"}
-        words = [w for w in filename.lower().split() if w not in stop_words]
-        if not words:
-            words = [filename.strip()]
-            
-        # Create a wildcard pattern from the words
-        search_pattern = "*" + "*".join(words) + "*"
-            
-        # Try `locate` first if it exists, it's much faster
-        if shutil.which("locate"):
-            res = subprocess.run(["locate", "-i", "--limit", str(max_results), search_pattern], capture_output=True, text=True)
-            if res.returncode == 0 and res.stdout.strip():
-                lines = res.stdout.strip().splitlines()
-                return {"success": True, "output": lines}
-                
-        # Fallback to `find /` with reasonable exclusions
-        find_cmd = [
-            "find", "/",
-            "-path", "/proc", "-prune", "-o",
-            "-path", "/sys", "-prune", "-o",
-            "-path", "/dev", "-prune", "-o",
-            "-path", "/run", "-prune", "-o",
-            "-path", "/snap", "-prune", "-o",
-            "-iname", search_pattern, "-print"
-        ]
-        
-        try:
-            # We use timeout because system-wide find can be slow
-            res = subprocess.run(find_cmd, capture_output=True, text=True, timeout=10)
-            lines = res.stdout.strip().splitlines()
-            return {"success": True, "output": lines[:max_results] if lines else []}
-        except subprocess.TimeoutExpired:
-            return {"success": False, "error": "System-wide search timed out."}
+        _resolve_path("/", self.config.read_roots)
+        words = _search_words(filename)
+        candidates: list[Path] = []
+        source = "filesystem_walk"
+        truncated = False
+
+        locate_bin = shutil.which("plocate") or shutil.which("locate")
+        if locate_bin:
+            query_limit = min(max_results * 5 + 1, 1001)
+            result = subprocess.run(
+                [
+                    locate_bin,
+                    "--ignore-case",
+                    "--existing",
+                    "--null",
+                    "--limit",
+                    str(query_limit),
+                    *words,
+                ],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            if result.returncode == 0:
+                candidates = [
+                    Path(raw.decode("utf-8", errors="surrogateescape"))
+                    for raw in result.stdout.split(b"\0")
+                    if raw
+                ]
+                source = "plocate"
+                truncated = len(candidates) > max_results
+
+        if not candidates and source != "plocate":
+            deadline = time.monotonic() + 12
+            excluded = {"/proc", "/sys", "/dev", "/run", "/snap"}
+            for root, dirs, files in os.walk("/", onerror=lambda _error: None):
+                if time.monotonic() >= deadline:
+                    truncated = True
+                    break
+                dirs[:] = [
+                    directory
+                    for directory in dirs
+                    if str(Path(root) / directory) not in excluded
+                ]
+                for name in [*dirs, *files]:
+                    if all(word in name.casefold() for word in words):
+                        candidates.append(Path(root) / name)
+                        if len(candidates) >= max_results * 5:
+                            truncated = True
+                            break
+                if truncated and len(candidates) >= max_results * 5:
+                    break
+
+        unique = {str(path): path for path in candidates}
+        ranked = sorted(unique.values(), key=lambda path: _result_rank(path, words))
+        if len(ranked) > max_results:
+            truncated = True
+        selected = ranked[:max_results]
+        output = {
+            "query": filename.strip(),
+            "source": source,
+            "results": [_path_result(path, index) for index, path in enumerate(selected, 1)],
+            "result_count": len(selected),
+            "truncated": truncated,
+        }
+        if source == "filesystem_walk":
+            output["warning"] = (
+                "The plocate index is unavailable; results came from a time-limited live scan."
+            )
+        return {"success": True, "output": output}
 
 
 def get_tools(config: ToolConfig) -> list[BaseTool]:
@@ -476,5 +620,6 @@ def get_tools(config: ToolConfig) -> list[BaseTool]:
         MoveFileTool(config=config),
         DeleteFileTool(config=config),
         OpenFileOrFolderTool(config=config),
+        RevealPathTool(config=config),
         FindFileSystemTool(config=config),
     ]

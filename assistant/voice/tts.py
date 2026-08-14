@@ -87,12 +87,12 @@ class EdgeTTS(TextToSpeech):
             seen.add(candidate)
             if not shutil.which(candidate) and not Path(candidate).is_file():
                 continue
-            # Quick smoke test: ask edge-tts for its version.  If the binary
-            # can't even import its own package, skip it.
+            # Keep startup local and fast. Listing voices makes a network call
+            # and used to delay the first usable spoken response.
             try:
                 probe = subprocess.run(
-                    [candidate, "--list-voices"],
-                    capture_output=True, text=True, timeout=15,
+                    [candidate, "--version"],
+                    capture_output=True, text=True, timeout=3,
                 )
                 if probe.returncode == 0:
                     return candidate
@@ -258,19 +258,8 @@ class EdgeTTS(TextToSpeech):
                 filename = f"tts_{item.item_id}.mp3"
                 filepath = tmp_dir / filename
 
-                # Build and run the TTS generation synchronously
-                quoted_text = shlex.quote(item.text)
-                tts_cmd = (
-                    f"{self._edge_tts_bin}"
-                    f" --voice {shlex.quote(self._voice)}"
-                    f" --rate {shlex.quote(self._rate)}"
-                    f" --text {quoted_text}"
-                    f" --write-media {shlex.quote(str(filepath))}"
-                )
-
                 proc = subprocess.Popen(
-                    tts_cmd,
-                    shell=True,
+                    self._build_cmd(item.text, str(filepath)),
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.PIPE,
                     preexec_fn=os.setsid,
