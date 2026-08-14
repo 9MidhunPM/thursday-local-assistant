@@ -1,9 +1,19 @@
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-async function waitFor(selector, timeoutMs = 30000) {
+function isVisible(element) {
+  if (!(element instanceof Element)) return false;
+  const style = getComputedStyle(element);
+  return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
+}
+
+function visibleNodes(selector, root = document) {
+  return [...root.querySelectorAll(selector)].filter(isVisible);
+}
+
+async function waitForVisible(selector, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const found = document.querySelector(selector);
+    const found = visibleNodes(selector).at(-1);
     if (found) return found;
     await delay(250);
   }
@@ -18,9 +28,50 @@ function firstText(root, selectors, fallback = "") {
   return fallback;
 }
 
+function firstVisibleText(root, selectors, fallback = "") {
+  for (const selector of selectors) {
+    const node = visibleNodes(selector, root).at(-1);
+    const value = node?.textContent?.trim();
+    if (value) return value;
+  }
+  return fallback;
+}
+
+function currentMessageMarker() {
+  const subject = firstVisibleText(document, ["h2.hP", "[data-thread-perm-id]"]);
+  const sender = firstVisibleText(document, ["span.gD", "span[email]"]);
+  const body = visibleNodes(".a3s").at(-1)?.textContent?.trim() || "";
+  return `${subject}\n${sender}\n${body.slice(0, 500)}`;
+}
+
+async function waitForOpenedMessage(
+  previousMarker,
+  subjectHint,
+  allowUnchanged = false,
+  timeoutMs = 20000
+) {
+  const deadline = Date.now() + timeoutMs;
+  const startedAt = Date.now();
+  const expected = subjectHint.trim().toLowerCase();
+  while (Date.now() < deadline) {
+    const body = visibleNodes(".a3s").at(-1);
+    const subject = firstVisibleText(document, ["h2.hP", "[data-thread-perm-id]"]);
+    const marker = currentMessageMarker();
+    const normalizedSubject = subject.toLowerCase();
+    const subjectMatches =
+      !expected || normalizedSubject.includes(expected) || expected.includes(normalizedSubject);
+    const settledInitialMessage = allowUnchanged && Date.now() - startedAt >= 500;
+    if (body && marker && (marker !== previousMarker || settledInitialMessage) && subjectMatches) {
+      return body;
+    }
+    await delay(250);
+  }
+  return null;
+}
+
 async function restoreInbox() {
   if (location.hash !== "#search/in%3Ainbox") location.hash = "#search/in%3Ainbox";
-  return waitFor("tr.zA", 30000);
+  return waitForVisible("tr.zA", 30000);
 }
 
 async function readInbox(maxMessages) {
@@ -33,13 +84,15 @@ async function readInbox(maxMessages) {
     throw new Error("Gmail loaded, but Thursday could not find the inbox message list.");
   }
 
-  const count = Math.min(maxMessages, document.querySelectorAll("tr.zA").length);
+  const availableCount = visibleNodes("tr.zA").length;
+  const count = Math.min(maxMessages, availableCount);
   const messages = [];
   const warnings = [];
+  const seen = new Set();
   for (let index = 0; index < count; index += 1) {
     const listReady = await restoreInbox();
     if (!listReady) break;
-    const rows = [...document.querySelectorAll("tr.zA")];
+    const rows = visibleNodes("tr.zA");
     const row = rows[index];
     if (!row) break;
     const wasUnread = row.classList.contains("zE");
@@ -50,21 +103,28 @@ async function readInbox(maxMessages) {
     );
     const senderHint = firstText(row, ["span[email]", ".yX.xY span", "td:nth-child(5)"]);
     const dateHint = firstText(row, ["td.xW span", "td:last-child"]);
+    const previousMarker = currentMessageMarker();
     row.click();
-    const firstBody = await waitFor(".a3s", 20000);
+    const firstBody = await waitForOpenedMessage(previousMarker, subjectHint, index === 0, 20000);
     if (!firstBody) {
       warnings.push(`Could not read message ${index + 1}: ${subjectHint}`);
       continue;
     }
-    const bodies = [...document.querySelectorAll(".a3s")];
-    const bodyNode = bodies.at(-1) || firstBody;
-    messages.push({
+    const bodyNode = visibleNodes(".a3s").at(-1) || firstBody;
+    const message = {
       number: String(index + 1),
-      sender: firstText(document, ["span.gD", "span[email]"], senderHint),
-      subject: firstText(document, ["h2.hP", "[data-thread-perm-id]"], subjectHint),
-      date: firstText(document, ["span.g3", "[aria-label*='date']"], dateHint),
+      sender: firstVisibleText(document, ["span.gD", "span[email]"], senderHint),
+      subject: firstVisibleText(document, ["h2.hP", "[data-thread-perm-id]"], subjectHint),
+      date: firstVisibleText(document, ["span.g3", "[aria-label*='date']"], dateHint),
       body: (bodyNode.textContent?.trim() || "").slice(0, 4000)
-    });
+    };
+    const messageKey = `${message.sender}\n${message.subject}\n${message.date}\n${message.body}`;
+    if (seen.has(messageKey)) {
+      warnings.push(`Gmail repeated message ${index + 1}; it was excluded from the summary.`);
+    } else {
+      seen.add(messageKey);
+      messages.push(message);
+    }
 
     if (wasUnread) {
       const unreadButton = document.querySelector(
@@ -79,7 +139,13 @@ async function readInbox(maxMessages) {
     }
   }
   await restoreInbox();
-  return { login_required: false, messages, warnings };
+  return {
+    login_required: false,
+    messages,
+    warnings,
+    available_count: availableCount,
+    requested_count: count
+  };
 }
 
 async function execute(command) {

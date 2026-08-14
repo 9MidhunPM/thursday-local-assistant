@@ -144,3 +144,36 @@ def test_inbox_summary_reuses_connected_gmail_tab() -> None:
     assert controller.calls == []
     assert bridge.calls == [("gmail_read_inbox", {"max_messages": 20}, 90)]
     assert any("existing Gmail tab" in item for item in progress)
+
+
+def test_inbox_summary_refuses_to_treat_one_read_as_the_whole_inbox() -> None:
+    bridge = FakeConnectedBridge(
+        {
+            "login_required": False,
+            "available_count": 20,
+            "requested_count": 20,
+            "messages": [
+                {
+                    "number": "1",
+                    "sender": "Person",
+                    "subject": "Only captured message",
+                    "date": "Aug 14",
+                    "body": "This must not become an inbox-wide summary.",
+                }
+            ],
+            "warnings": [],
+        }
+    )
+    summarizer_calls: list[str] = []
+    result = GmailInboxSummaryTool(bridge=bridge, controller=FakeController()).execute(  # type: ignore[arg-type]
+        {},
+        SimpleNamespace(
+            summarize_private_text=lambda prompt: summarizer_calls.append(prompt) or "wrong",
+            report_progress=None,
+        ),
+    )
+
+    assert not result["success"]
+    assert result["count"] == 1
+    assert "stopped" in result["error"]
+    assert summarizer_calls == []

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Thursday Main Profile Helper",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Lets Thursday automate allow-listed tasks in the user's normal Brave profile.",
   "host_permissions": [
     "http://127.0.0.1:5005/*",

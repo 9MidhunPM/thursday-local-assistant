@@ -474,6 +474,25 @@ class GmailInboxSummaryTool(BaseTool):
         safe_warnings = (
             [str(item)[:1_000] for item in warnings] if isinstance(warnings, list) else []
         )
+        try:
+            expected_count = min(
+                int(inbox.get("available_count") or len(messages)),
+                int(inbox.get("requested_count") or 20),
+                20,
+            )
+        except (TypeError, ValueError):
+            expected_count = len(messages)
+        if expected_count >= 2 and len(messages) < 2:
+            return {
+                "success": False,
+                "count": len(messages),
+                "error": (
+                    f"Gmail showed {expected_count} inbox messages, but Thursday could only "
+                    f"verify {len(messages)} distinct message. The summary was stopped to avoid "
+                    "presenting one email as the whole inbox."
+                ),
+                "warnings": safe_warnings,
+            }
         if not messages:
             return {
                 "success": True,
