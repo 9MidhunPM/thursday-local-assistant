@@ -1,26 +1,42 @@
 import urllib.parse
-from pathlib import Path
 from types import SimpleNamespace
 
 from assistant.logging_utils import redact_private_request_text
 from assistant.security import redact_secrets
-from assistant.tools.browser_control import BRAVE_EXTENSION_DIR, BraveController
+from assistant.tools.browser_control import BraveController
 from assistant.tools.gmail_tool import GmailComposeTool
 
 
 class FakeBrowser:
-    def __init__(self, success: bool = True):
-        self.success = success
-        self.calls: list[tuple[str, str, str]] = []
+    def __init__(self):
+        self.calls: list[tuple[str, str | None]] = []
 
-    def fill_gmail_draft(self, recipient: str, subject: str, body: str):
-        self.calls.append((recipient, subject, body))
-        return (self.success, None if self.success else "focus failed")
+    def open_url(self, url: str, title_hint: str | None = None):
+        self.calls.append((url, title_hint))
+        return True, None
+
+
+class FakeBridge:
+    def __init__(self, connected: bool = False):
+        self.connected = connected
+        self.calls = []
+
+    def status(self):
+        return {"connected": self.connected}
+
+    def wait_until_connected(self, timeout=20):
+        self.connected = True
+        return True
+
+    def request(self, action, payload, timeout=90):
+        self.calls.append((action, payload, timeout))
+        return {"ready": True}
 
 
 def test_gmail_compose_creates_draft_but_never_sends():
     browser = FakeBrowser()
-    tool = GmailComposeTool(controller=browser)  # type: ignore[arg-type]
+    bridge = FakeBridge()
+    tool = GmailComposeTool(controller=browser, bridge=bridge)  # type: ignore[arg-type]
     result = tool.execute(
         {
             "recipient": "person@example.com",
@@ -32,14 +48,15 @@ def test_gmail_compose_creates_draft_but_never_sends():
     assert result["success"]
     assert result["drafted"] is True
     assert result["sent"] is False
-    assert browser.calls == [
-        ("person@example.com", "Project update", "Hello,\n\nHere is the update.")
-    ]
+    assert len(browser.calls) == 1
+    assert bridge.calls[0][0] == "gmail.open_draft"
+    assert "to=person%40example.com" in bridge.calls[0][1]["url"]
 
 
 def test_gmail_compose_rejects_invalid_recipient_before_browser_control():
     browser = FakeBrowser()
-    tool = GmailComposeTool(controller=browser)  # type: ignore[arg-type]
+    bridge = FakeBridge()
+    tool = GmailComposeTool(controller=browser, bridge=bridge)  # type: ignore[arg-type]
     result = tool.execute(
         {"recipient": "not-an-email", "subject": "Hi", "body": "Body"},
         SimpleNamespace(),  # type: ignore[arg-type]
@@ -100,7 +117,7 @@ def test_open_url_reuses_existing_matching_brave_window(monkeypatch):
     assert controller.open_url("https://mail.google.com", title_hint="Mail") == (True, None)
 
 
-def test_open_url_loads_helper_when_starting_brave(monkeypatch):
+def test_open_url_starts_plain_brave_without_extension_flags(monkeypatch):
     controller = BraveController()
     focus_results = iter([(False, "not open"), (True, None)])
     launched: list[list[str]] = []
@@ -110,11 +127,5 @@ def test_open_url_loads_helper_when_starting_brave(monkeypatch):
         "assistant.tools.browser_control.subprocess.Popen",
         lambda args, **_kwargs: launched.append(args),
     )
-    monkeypatch.setattr("assistant.tools.browser_control.BRAVE_EXTENSION_DIR", Path("/helper"))
-    monkeypatch.setattr(Path, "is_dir", lambda _self: True)
-
     assert controller.open_url("https://mail.google.com", title_hint="Mail") == (True, None)
-    assert launched == [
-        ["/usr/bin/brave", "--load-extension=/helper", "https://mail.google.com"]
-    ]
-    assert BRAVE_EXTENSION_DIR.name == "browser_extension"
+    assert launched == [["/usr/bin/brave", "https://mail.google.com"]]

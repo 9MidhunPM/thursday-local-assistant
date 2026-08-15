@@ -68,10 +68,8 @@ class AssistantRuntime:
     def shutdown(self) -> None:
         """Gracefully shutdown the runtime components."""
         from .tools.reels_tool import stop_reels_watcher
-        from .tools.ui_automation import shutdown_browser_automation
 
         stop_reels_watcher()
-        shutdown_browser_automation()
         if self.llm:
             self.llm.close()
         if self.tts:

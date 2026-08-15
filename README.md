@@ -229,13 +229,12 @@ Spotify commands only target an MPRIS player whose name contains `spotify`; anot
 player such as YouTube or mpv is never used as a fallback. File-search results are numbered,
 so follow-ups such as “open the second one” can reveal that file in Thunar.
 
-Website reviews use Python Playwright with the already-installed Brave binary. Calendar automation
-uses its visible persistent profile at `~/.local/share/thursday/browser-profile`; sign in once when
-Thursday opens it. Gmail and Instagram instead use the normal Brave profile. Drafting opens a
-populated unsent Gmail compose window and never activates Send. `summarize_inbox` uses the
-allow-listed local Brave helper to read the newest 20 inbox items without asking for a Gmail
-password, `watch_reels` advances only while Instagram is focused, and Calendar writes always show
-a confirmation first.
+Website reviews use Python Playwright with the already-installed Brave binary. Gmail, Google
+Calendar, and Instagram use the signed Thursday Brave Helper in the normal Brave profile, so they
+reuse the accounts already signed in there. Drafting opens a populated unsent Gmail compose window
+and never activates Send. `summarize_inbox` reads the newest 20 inbox rows without asking for a
+Gmail password, `watch_reels` advances only while Instagram is visible and focused, and Calendar
+writes always show a confirmation first.
 
 Install Thursday's user-level `mailto:` handler to open populated Gmail drafts in normal Brave:
 
@@ -243,15 +242,20 @@ Install Thursday's user-level `mailto:` handler to open populated Gmail drafts i
 python -m assistant.integrations.mailto_handler --install
 ```
 
-Install the default-Brave launcher that loads Thursday's Gmail helper:
+Install or repair the persistent managed Brave helper:
 
 ```bash
-install -Dm644 desktop/brave-browser.desktop ~/.local/share/applications/brave-browser.desktop
+python -m assistant.integrations.brave_helper --install
 ```
 
-After installation, inbox checks start Brave automatically when it is closed and reuse an existing
-Gmail tab/helper connection when it is open. Repeated summary requests are serialized, so they do
-not create duplicate Gmail tabs or race while reading the inbox.
+The Thursday desktop launcher performs the same idempotent check and requests one-time system
+authorization when the helper is missing or outdated. Brave then loads it on every normal launch;
+no custom Brave desktop entry or `--load-extension` flag is needed. Check the installation with
+`python -m assistant.integrations.brave_helper --status`. Repeated summary requests are serialized,
+so they do not create duplicate Gmail tabs or race while reading the inbox. Brave may display
+"Managed by your organization" because the helper is installed through its Linux managed policy.
+Remove only Thursday's helper and policy with
+`python -m assistant.integrations.brave_helper --uninstall`.
 
 ---
 

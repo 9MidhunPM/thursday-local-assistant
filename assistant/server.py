@@ -237,7 +237,9 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
         self.send_header(
             "Access-Control-Allow-Headers",
-            "Content-Type, Authorization, X-Thursday-Token",
+            "Content-Type, Authorization, X-Thursday-Token, "
+            "X-Thursday-Helper-Token, X-Thursday-Helper-Version, "
+            "X-Thursday-Helper-Capabilities",
         )
         self.send_header("Access-Control-Allow-Private-Network", "true")
         self.end_headers()
@@ -271,6 +273,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 "provider": provider,
                 "model": model_name,
                 "mode": mode,
+                "brave_helper": browser_bridge.status(),
             }
             try:
                 self.wfile.write(json.dumps(health_data).encode())
@@ -282,11 +285,23 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.handle_tools_request()
             return
 
-        if parsed_path == "/api/browser-bridge/next":
+        if parsed_path == "/api/browser-bridge/v2/next":
             if not self._is_loopback_request():
                 self.send_error(403, "Browser bridge is loopback-only")
                 return
-            command = browser_bridge.next_command(timeout=20)
+            if not browser_bridge.authenticate(self.headers.get("X-Thursday-Helper-Token")):
+                self.send_error(401, "Invalid Brave helper token")
+                return
+            params = parse_qs(parsed.query)
+            helper_version = (params.get("version") or [None])[0]
+            capabilities = [
+                item for item in (params.get("capabilities") or [""])[0].split(",") if item
+            ]
+            command = browser_bridge.next_command(
+                timeout=20,
+                helper_version=helper_version,
+                capabilities=capabilities,
+            )
             if command is None:
                 self.send_response(204)
                 self.send_header("Access-Control-Allow-Origin", "*")
@@ -296,7 +311,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(200, command)
             return
 
-        if parsed_path == "/api/browser-bridge/status":
+        if parsed_path == "/api/browser-bridge/v2/status":
             if not self._is_loopback_request():
                 self.send_error(403, "Browser bridge is loopback-only")
                 return
@@ -633,9 +648,12 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
         q_token = (query.get("token") or [None])[0]
 
-        if parsed_path == "/api/browser-bridge/result":
+        if parsed_path == "/api/browser-bridge/v2/result":
             if not self._is_loopback_request():
                 self.send_error(403, "Browser bridge is loopback-only")
+                return
+            if not browser_bridge.authenticate(self.headers.get("X-Thursday-Helper-Token")):
+                self.send_error(401, "Invalid Brave helper token")
                 return
             content_length = int(self.headers.get("Content-Length", 0))
             if content_length <= 0 or content_length > 2_000_000:

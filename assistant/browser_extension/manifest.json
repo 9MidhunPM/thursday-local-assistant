@@ -1,23 +1,32 @@
 {
   "manifest_version": 3,
-  "name": "Thursday Main Profile Helper",
-  "version": "1.0.4",
-  "description": "Lets Thursday automate allow-listed tasks in the user's normal Brave profile.",
+  "name": "Thursday Brave Helper",
+  "version": "2.0.7",
+  "description": "Runs Thursday's allow-listed Gmail, Calendar, and Instagram actions in your normal Brave profile.",
+  "permissions": ["alarms", "storage", "tabs"],
   "host_permissions": [
     "http://127.0.0.1:5005/*",
-    "https://mail.google.com/*"
+    "https://mail.google.com/*",
+    "https://calendar.google.com/*",
+    "https://www.instagram.com/*"
   ],
+  "background": {"service_worker": "background.js"},
+  "action": {"default_title": "Thursday Brave Helper", "default_popup": "popup.html"},
   "content_scripts": [
     {
       "matches": ["https://mail.google.com/*"],
       "js": ["gmail_content.js"],
       "run_at": "document_idle"
-    }
-  ],
-  "web_accessible_resources": [
+    },
     {
-      "resources": ["bridge_frame.html", "bridge_frame.js"],
-      "matches": ["https://mail.google.com/*"]
+      "matches": ["https://calendar.google.com/*"],
+      "js": ["calendar_content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.instagram.com/*"],
+      "js": ["instagram_content.js"],
+      "run_at": "document_idle"
     }
   ],
   "content_security_policy": {

@@ -155,7 +155,17 @@ KEYWORD_GROUPS: list[tuple[tuple[str, ...], frozenset[str]]] = [
         frozenset({"email"}),
     ),
     (
-        ("calendar", "schedule", "agenda", "meeting", "appointment", "event"),
+        (
+            "calendar",
+            "calender",
+            "schedule",
+            "agenda",
+            "meeting",
+            "appointment",
+            "event",
+            "birthday",
+            "birthdays",
+        ),
         frozenset({"calendar"}),
     ),
     (
@@ -220,6 +230,7 @@ def filter_tools_payload(
         return tools_payload
 
     groups = select_groups_for_message(user_text, enabled_groups)
+    specialist_group = "calendar" if "calendar" in groups else None
     filtered: list[dict[str, object]] = []
     for tool in tools_payload:
         try:
@@ -228,6 +239,10 @@ def filter_tools_payload(
             filtered.append(tool)
             continue
         g = group_for(str(name))
+        if specialist_group and g in {"terminal", "apps", "files", "web"}:
+            # Calendar requests must not silently degrade into shell output or
+            # app search. Those tools cannot read or mutate Google Calendar.
+            continue
         if g in groups or g == "misc":
             filtered.append(tool)
 

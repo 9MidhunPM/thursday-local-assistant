@@ -5,15 +5,6 @@ from types import SimpleNamespace
 from assistant.tools.gmail_tool import GmailInboxSummaryTool, _clean_message_body
 
 
-class FakeAutomation:
-    def __init__(self, inbox):
-        self.inbox = inbox
-
-    def run(self, _operation, timeout=90):
-        _ = timeout
-        return self.inbox
-
-
 class FakeBridge:
     def __init__(self, inbox):
         self.inbox = inbox
@@ -22,6 +13,12 @@ class FakeBridge:
     def request(self, action, payload, timeout=90):
         self.calls.append((action, payload, timeout))
         return self.inbox
+
+    def status(self):
+        return {"connected": False, "pending": 0}
+
+    def wait_until_connected(self, timeout=20):
+        return True
 
 
 class FakeConnectedBridge(FakeBridge):
@@ -62,10 +59,9 @@ def test_inbox_summary_batches_twenty_messages_without_returning_bodies() -> Non
         prompts.append(prompt)
         return "Final detailed summary" if len(prompts) == 5 else "Batch summary"
 
-    tool = GmailInboxSummaryTool(
-        automation=FakeAutomation(  # type: ignore[arg-type]
-            {"login_required": False, "messages": messages, "warnings": []}
-        )
+    tool = GmailInboxSummaryTool(  # type: ignore[arg-type]
+        bridge=FakeConnectedBridge({"login_required": False, "messages": messages, "warnings": []}),
+        controller=FakeController(),
     )
     result = tool.execute({}, SimpleNamespace(summarize_private_text=summarize))
     assert result["success"]
@@ -76,10 +72,9 @@ def test_inbox_summary_batches_twenty_messages_without_returning_bodies() -> Non
 
 
 def test_inbox_summary_surfaces_one_time_login() -> None:
-    tool = GmailInboxSummaryTool(
-        automation=FakeAutomation(  # type: ignore[arg-type]
-            {"login_required": True, "messages": [], "warnings": []}
-        )
+    tool = GmailInboxSummaryTool(  # type: ignore[arg-type]
+        bridge=FakeConnectedBridge({"login_required": True, "messages": [], "warnings": []}),
+        controller=FakeController(),
     )
     result = tool.execute({}, SimpleNamespace(summarize_private_text=lambda prompt: prompt))
     assert not result["success"]
@@ -117,10 +112,14 @@ def test_inbox_summary_uses_main_profile_bridge_by_default() -> None:
     )
 
     assert result["success"]
-    assert controller.calls == [
-        ("https://mail.google.com/mail/u/0/#search/in%3Ainbox", "Mail")
+    assert controller.calls == [("https://mail.google.com/mail/u/0/#search/in%3Ainbox", "Mail")]
+    assert bridge.calls == [
+        (
+            "gmail.read_inbox",
+            {"max_messages": 20, "url": "https://mail.google.com/mail/u/0/#search/in%3Ainbox"},
+            120,
+        )
     ]
-    assert bridge.calls == [("gmail_read_inbox", {"max_messages": 20}, 90)]
     assert any("Opening Gmail" in item for item in progress)
     assert any("Summarizing messages" in item for item in progress)
 
@@ -142,7 +141,13 @@ def test_inbox_summary_reuses_connected_gmail_tab() -> None:
 
     assert result["success"]
     assert controller.calls == []
-    assert bridge.calls == [("gmail_read_inbox", {"max_messages": 20}, 90)]
+    assert bridge.calls == [
+        (
+            "gmail.read_inbox",
+            {"max_messages": 20, "url": "https://mail.google.com/mail/u/0/#search/in%3Ainbox"},
+            120,
+        )
+    ]
     assert any("existing Gmail tab" in item for item in progress)
 
 
