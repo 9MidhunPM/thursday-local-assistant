@@ -6,12 +6,10 @@ import subprocess
 import time
 import urllib.parse
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 
 BRAVE_CLASSES = ("brave-browser", "brave")
-BRAVE_EXTENSION_DIR = Path(__file__).resolve().parents[1] / "browser_extension"
 
 
 def _run(command: list[str], *, timeout: float = 10) -> subprocess.CompletedProcess[str]:
@@ -123,10 +121,7 @@ class BraveController:
             focused, _ = self.focus(title_hint)
             if focused:
                 return True, None
-        launch_args = [binary]
-        if BRAVE_EXTENSION_DIR.is_dir():
-            launch_args.append(f"--load-extension={BRAVE_EXTENSION_DIR}")
-        launch_args.append(url)
+        launch_args = [binary, url]
         subprocess.Popen(
             launch_args,
             start_new_session=True,

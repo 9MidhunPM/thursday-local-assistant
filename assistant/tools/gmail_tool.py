@@ -1,4 +1,4 @@
-"""Gmail IMAP tool – reads a user's Gmail inbox.
+"""Gmail tools for safe reads, summaries, and unsent drafts.
 
 Credentials are preferred from environment variables so they never pass through
 the model tool-call channel:
@@ -25,7 +25,6 @@ from assistant.agent.context import ExecutionContext
 from assistant.integrations.browser_bridge import BrowserBridge, browser_bridge
 from assistant.tools.base import BaseTool, ToolMetadata
 from assistant.tools.browser_control import BraveController
-from assistant.tools.ui_automation import BraveAutomationSession, get_browser_automation
 
 _EMAIL_RE = re.compile(r"^[^\s@,]+@[^\s@,]+\.[^\s@,]+$")
 _GMAIL_SEARCH_URL = "https://mail.google.com/mail/u/0/#search/in%3Ainbox"
@@ -46,102 +45,6 @@ def _clean_message_body(value: str, limit: int = 4_000) -> str:
     value = re.sub(r"(?m)^>.*$", "", value)
     value = re.sub(r"\n{3,}", "\n\n", value).strip()
     return value[:limit] + ("…" if len(value) > limit else "")
-
-
-def _first_text(page: Any, selectors: tuple[str, ...], default: str = "") -> str:
-    for selector in selectors:
-        locator = page.locator(selector)
-        if locator.count():
-            try:
-                value = locator.last.inner_text(timeout=3_000).strip()
-            except Exception:  # noqa: BLE001
-                continue
-            if value:
-                return str(value)
-    return default
-
-
-def _restore_unread(page: Any) -> bool:
-    selectors = (
-        '[aria-label^="Mark as unread"]',
-        '[data-tooltip^="Mark as unread"]',
-        '[title^="Mark as unread"]',
-    )
-    for selector in selectors:
-        locator = page.locator(selector)
-        if locator.count():
-            try:
-                locator.first.click(timeout=5_000)
-                return True
-            except Exception:  # noqa: BLE001
-                continue
-    return False
-
-
-def _read_inbox_ui(browser_context: Any, max_messages: int) -> dict[str, Any]:
-    page = next(
-        (candidate for candidate in browser_context.pages if "mail.google.com" in candidate.url),
-        None,
-    ) or browser_context.new_page()
-    page.goto(_GMAIL_SEARCH_URL, wait_until="domcontentloaded", timeout=45_000)
-    page.bring_to_front()
-    if "accounts.google.com" in page.url or page.locator('input[type="email"]').count():
-        return {"login_required": True, "messages": [], "warnings": []}
-    try:
-        page.wait_for_selector("tr.zA", timeout=30_000)
-    except Exception as exc:  # noqa: BLE001
-        no_mail = page.get_by_text(re.compile(r"No (?:emails|mail)", re.IGNORECASE))
-        if no_mail.count():
-            return {"login_required": False, "messages": [], "warnings": []}
-        raise RuntimeError(
-            "Gmail loaded, but Thursday could not find the inbox message list. "
-            "Make sure Gmail is fully loaded in the automation window."
-        ) from exc
-
-    available = page.locator("tr.zA").count()
-    messages: list[dict[str, str]] = []
-    warnings: list[str] = []
-    for index in range(min(max_messages, available)):
-        page.goto(_GMAIL_SEARCH_URL, wait_until="domcontentloaded", timeout=45_000)
-        page.wait_for_selector("tr.zA", timeout=30_000)
-        rows = page.locator("tr.zA")
-        if index >= rows.count():
-            break
-        row = rows.nth(index)
-        classes = row.get_attribute("class") or ""
-        was_unread = "zE" in classes.split()
-        subject_hint = _first_text(
-            row,
-            ("span.bog", "[data-thread-id] span", "td:nth-child(6)"),
-            f"Message {index + 1}",
-        )
-        sender_hint = _first_text(row, ("span[email]", ".yX.xY span", "td:nth-child(5)"))
-        date_hint = _first_text(row, ("td.xW span", "td:last-child"))
-        row.click(timeout=10_000)
-        try:
-            page.wait_for_selector(".a3s", timeout=20_000)
-        except Exception:  # noqa: BLE001
-            warnings.append(f"Could not read message {index + 1}: {subject_hint}")
-            if was_unread and not _restore_unread(page):
-                warnings.append(f"Could not restore unread state for: {subject_hint}")
-            continue
-        body = _first_text(page, (".a3s.aiL", ".a3s"))
-        subject = _first_text(page, ("h2.hP", "[data-thread-perm-id]"), subject_hint)
-        sender = _first_text(page, ("span.gD", "span[email]"), sender_hint)
-        date = _first_text(page, ("span.g3", "[aria-label*='date']"), date_hint)
-        messages.append(
-            {
-                "number": str(index + 1),
-                "sender": sender,
-                "subject": subject,
-                "date": date,
-                "body": _clean_message_body(body),
-            }
-        )
-        if was_unread and not _restore_unread(page):
-            warnings.append(f"Could not restore unread state for: {subject_hint}")
-
-    return {"login_required": False, "messages": messages, "warnings": warnings}
 
 
 @dataclass
@@ -176,7 +79,7 @@ class GmailComposeTool(BaseTool):
     )
 
     controller: BraveController | None = None
-    automation: BraveAutomationSession | None = None
+    bridge: BrowserBridge | None = None
 
     def execute(self, arguments: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
         recipient = str(arguments.get("recipient") or "").strip()
@@ -194,58 +97,29 @@ class GmailComposeTool(BaseTool):
             return {"success": False, "error": "An email body is required."}
 
         joined_recipients = ", ".join(recipients)
-        if self.automation is not None:
-            query = urllib.parse.urlencode(
-                {"view": "cm", "fs": "1", "to": joined_recipients, "su": subject, "body": body},
-                quote_via=urllib.parse.quote,
-            )
-
-            def compose(browser_context: Any) -> str:
-                page = next(
-                    (
-                        candidate
-                        for candidate in browser_context.pages
-                        if "mail.google.com" in candidate.url
-                    ),
-                    None,
-                ) or browser_context.new_page()
-                page.goto(
-                    f"https://mail.google.com/mail/u/0/?{query}",
-                    wait_until="domcontentloaded",
-                    timeout=45_000,
-                )
-                page.bring_to_front()
-                if "accounts.google.com" in page.url or page.locator('input[type="email"]').count():
-                    return "login_required"
-                try:
-                    page.wait_for_selector(
-                        'input[name="subjectbox"], input[placeholder="Subject"]',
-                        timeout=20_000,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    raise RuntimeError(
-                        "Gmail opened, but the populated compose window could not be verified."
-                    ) from exc
-                return "ready"
-
-            try:
-                state = (self.automation or get_browser_automation()).run(compose, timeout=90)
-            except Exception as exc:  # noqa: BLE001
-                return {"success": False, "error": str(exc)}
-            if state == "login_required":
-                return {
-                    "success": False,
-                    "login_required": True,
-                    "error": (
-                        "Gmail is open in Thursday's Brave profile. Sign in once, then retry "
-                        "the draft."
-                    ),
-                }
-        else:
-            browser = self.controller or BraveController()
-            drafted, error = browser.fill_gmail_draft(joined_recipients, subject, body)
-            if not drafted:
-                return {"success": False, "error": error or "Gmail draft creation failed."}
+        query = urllib.parse.urlencode(
+            {"view": "cm", "fs": "1", "to": joined_recipients, "su": subject, "body": body},
+            quote_via=urllib.parse.quote,
+        )
+        url = f"https://mail.google.com/mail/u/0/?{query}"
+        bridge = self.bridge or browser_bridge
+        browser = self.controller or BraveController()
+        try:
+            if not bool(bridge.status().get("connected")):
+                opened, error = browser.open_url(url, title_hint="Mail")
+                if not opened:
+                    return {"success": False, "error": error or "Gmail draft creation failed."}
+                if not bridge.wait_until_connected(timeout=20):
+                    return {"success": False, "error": "Thursday's Brave helper did not connect."}
+            state = bridge.request("gmail.open_draft", {"url": url}, timeout=45)
+        except Exception as exc:  # noqa: BLE001
+            return {"success": False, "error": str(exc)}
+        if state.get("login_required"):
+            return {
+                "success": False,
+                "login_required": True,
+                "error": "Gmail is open in Brave. Sign in, then retry the draft.",
+            }
         return {
             "success": True,
             "drafted": True,
@@ -380,18 +254,17 @@ class GmailReadTool(BaseTool):
 
 @dataclass
 class GmailInboxSummaryTool(BaseTool):
-    """Summarize the newest inbox messages from the user's main Brave profile."""
+    """Summarize the newest inbox rows from the user's normal Brave profile."""
 
     metadata: ToolMetadata = ToolMetadata(
         name="summarize_inbox",
         description=(
-            "Read the newest 20 messages matching in:inbox in the user's signed-in default "
+            "Read the newest 20 rows matching in:inbox in the user's signed-in normal "
             "Brave profile and return a detailed private summary. Use for inbox summaries "
             "and triage."
         ),
         parameters={"type": "object", "properties": {}, "required": []},
     )
-    automation: BraveAutomationSession | None = None
     bridge: BrowserBridge | None = None
     controller: BraveController | None = None
 
@@ -400,50 +273,34 @@ class GmailInboxSummaryTool(BaseTool):
             return {"success": False, "error": "Private-text summarization is unavailable."}
         report_progress = getattr(context, "report_progress", None)
         try:
-            if self.automation is not None:
-                if report_progress:
-                    report_progress("\nReading the newest inbox messages…")
-                inbox = self.automation.run(
-                    lambda browser: _read_inbox_ui(browser, 20),
-                    timeout=240,
-                )
-            else:
-                bridge = self.bridge or browser_bridge
-                with _GMAIL_SUMMARY_LOCK:
-                    status_fn = getattr(bridge, "status", None)
-                    status = status_fn() if callable(status_fn) else {}
-                    if not bool(status.get("connected")):
-                        if report_progress:
-                            report_progress("\nOpening Gmail in your default Brave profile…")
-                        opened, error = (self.controller or BraveController()).open_url(
-                            _GMAIL_SEARCH_URL,
-                            title_hint="Mail",
-                        )
-                        if not opened:
-                            return {
-                                "success": False,
-                                "error": error
-                                or "Gmail did not open in the default Brave profile.",
-                            }
-                        wait_for_bridge = getattr(bridge, "wait_until_connected", None)
-                        if callable(wait_for_bridge) and not wait_for_bridge(timeout=15):
-                            return {
-                                "success": False,
-                                "error": (
-                                    "Gmail opened, but Thursday's helper did not load in the "
-                                    "main Brave profile. Relaunch Brave from the installed app "
-                                    "menu once, then retry."
-                                ),
-                            }
-                    elif report_progress:
-                        report_progress("\nUsing your existing Gmail tab…")
+            bridge = self.bridge or browser_bridge
+            with _GMAIL_SUMMARY_LOCK:
+                status_fn = getattr(bridge, "status", None)
+                status = status_fn() if callable(status_fn) else {}
+                if not bool(status.get("connected")):
                     if report_progress:
-                        report_progress("\nReading the newest 20 inbox messages…")
-                    inbox = bridge.request(
-                        "gmail_read_inbox",
-                        {"max_messages": 20},
-                        timeout=90,
+                        report_progress("\nOpening Gmail in your normal Brave profile…")
+                    opened, error = (self.controller or BraveController()).open_url(
+                        _GMAIL_SEARCH_URL,
+                        title_hint="Mail",
                     )
+                    if not opened:
+                        return {"success": False, "error": error or "Gmail did not open in Brave."}
+                    wait_for_bridge = getattr(bridge, "wait_until_connected", None)
+                    if callable(wait_for_bridge) and not wait_for_bridge(timeout=20):
+                        return {
+                            "success": False,
+                            "error": "Thursday's managed Brave helper did not connect.",
+                        }
+                elif report_progress:
+                    report_progress("\nUsing your existing Gmail tab…")
+                if report_progress:
+                    report_progress("\nReading the newest 20 inbox messages…")
+                inbox = bridge.request(
+                    "gmail.read_inbox",
+                    {"max_messages": 20, "url": _GMAIL_SEARCH_URL},
+                    timeout=120,
+                )
         except Exception as exc:
             return {"success": False, "error": str(exc)}
         if bool(inbox.get("login_required")):
@@ -451,8 +308,8 @@ class GmailInboxSummaryTool(BaseTool):
                 "success": False,
                 "login_required": True,
                 "error": (
-                    "Gmail is open in your default Brave profile, but that profile is not "
-                    "signed in. Sign in there once, then ask for the inbox summary again."
+                    "Gmail is open in your normal Brave profile, but that profile is not "
+                    "signed in. Sign in there, then ask for the inbox summary again."
                 ),
             }
         raw_messages = inbox.get("messages")
@@ -527,8 +384,7 @@ class GmailInboxSummaryTool(BaseTool):
             )
 
         combined = "\n\n".join(
-            f"BATCH {index + 1}\n{summary}"
-            for index, summary in enumerate(batch_summaries)
+            f"BATCH {index + 1}\n{summary}" for index, summary in enumerate(batch_summaries)
         )
         if report_progress:
             report_progress("\nPreparing the detailed inbox summary…")

@@ -9,8 +9,9 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from assistant.agent.context import ExecutionContext
+from assistant.integrations.browser_bridge import BrowserBridge, browser_bridge
 from assistant.tools.base import BaseTool, ToolMetadata
-from assistant.tools.ui_automation import BraveAutomationSession, get_browser_automation
+from assistant.tools.browser_control import BraveController
 
 TIMEZONE = ZoneInfo("Asia/Kolkata")
 
@@ -63,27 +64,39 @@ def _parse_day(value: str | None, now: datetime) -> date:
 
 
 def _calendar_url(day: date) -> str:
-    return f"https://calendar.google.com/calendar/u/0/r/agenda/{day.year}/{day.month}/{day.day}"
-
-
-def _login_required(page: Any) -> bool:
-    return "accounts.google.com" in page.url or bool(page.locator('input[type="email"]').count())
-
-
-def _calendar_page(browser_context: Any) -> Any:
-    return next(
-        (
-            page
-            for page in browser_context.pages
-            if "calendar.google.com" in page.url or "accounts.google.com" in page.url
-        ),
-        None,
-    ) or browser_context.new_page()
+    # Schedule/agenda view renders neighbouring days in one viewport, which
+    # makes a date-bounded read ambiguous. Day view scopes DOM event nodes to
+    # the exact requested calendar date.
+    return f"https://calendar.google.com/calendar/u/0/r/day/{day.year}/{day.month}/{day.day}"
 
 
 _TIME_RANGE = re.compile(
     r"(?P<start>\d{1,2}(?::\d{2})?\s*[ap]m)\s*(?:to|[-–—])\s*"
     r"(?P<end>\d{1,2}(?::\d{2})?\s*[ap]m)",
+    re.IGNORECASE,
+)
+_MONTHS = {
+    name.lower(): index
+    for index, name in enumerate(
+        (
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        ),
+        start=1,
+    )
+}
+_DATE_IN_LABEL = re.compile(
+    r"\b(" + "|".join(_MONTHS) + r")\s+(\d{1,2})(?:,\s*(\d{4}))?\b",
     re.IGNORECASE,
 )
 
@@ -106,53 +119,86 @@ def _event_times(label: str, day: date) -> tuple[datetime | None, datetime | Non
     return start, end
 
 
-def _load_agenda(browser_context: Any, start_day: date, days: int) -> dict[str, Any]:
-    page = _calendar_page(browser_context)
-    collected: list[EventRecord] = []
-    for offset in range(days):
-        day = start_day + timedelta(days=offset)
-        page.goto(_calendar_url(day), wait_until="domcontentloaded", timeout=45_000)
-        page.bring_to_front()
-        if _login_required(page):
-            return {"login_required": True, "events": []}
+def _event_day_from_label(label: str, fallback: date) -> date:
+    """Use Calendar's accessible event date instead of the viewport target.
+
+    Schedule view can expose events from adjacent days at the same time. Its
+    aria-label contains the real month/day, so using it prevents shifted dates
+    and duplicate events during a multi-day read.
+    """
+    match = _DATE_IN_LABEL.search(label)
+    if not match:
+        return fallback
+    month = _MONTHS[match.group(1).lower()]
+    day_of_month = int(match.group(2))
+    if match.group(3):
+        return date(int(match.group(3)), month, day_of_month)
+    candidates: list[date] = []
+    for year in (fallback.year - 1, fallback.year, fallback.year + 1):
         try:
-            page.wait_for_timeout(1_500)
-            locators = page.locator("[data-eventid]")
-            count = locators.count()
-        except Exception as exc:  # noqa: BLE001
-            raise RuntimeError("Google Calendar loaded, but its agenda could not be read.") from exc
-        seen: set[str] = set()
-        for index in range(count):
-            event = locators.nth(index)
-            event_id = event.get_attribute("data-eventid") or ""
-            if not event_id or event_id in seen:
-                continue
-            seen.add(event_id)
-            label = (event.get_attribute("aria-label") or event.inner_text()).strip()
-            if not label:
-                continue
-            event_start, event_end = _event_times(label, day)
-            collected.append(EventRecord(event_id, day, label[:800], event_start, event_end))
-    return {"login_required": False, "events": collected}
+            candidates.append(date(year, month, day_of_month))
+        except ValueError:
+            pass
+    if not candidates:
+        return fallback
+    return min(candidates, key=lambda candidate: abs((candidate - fallback).days))
 
 
-def _fill_label(page: Any, label_pattern: str, value: str) -> bool:
-    pattern = re.compile(label_pattern, re.IGNORECASE)
-    locator = page.get_by_label(pattern)
-    if locator.count():
-        locator.first.fill(value)
-        return True
-    return False
+def _ensure_bridge(
+    bridge: BrowserBridge,
+    controller: BraveController,
+    url: str,
+) -> None:
+    if bridge.status().get("connected"):
+        return
+    opened, error = controller.open_url(url, title_hint="Calendar")
+    if not opened:
+        raise RuntimeError(error or "Google Calendar did not open in Brave.")
+    if not bridge.wait_until_connected(timeout=20):
+        raise RuntimeError("Thursday's managed Brave helper did not connect.")
 
 
-def _save_calendar_page(page: Any) -> None:
-    save = page.get_by_role("button", name=re.compile(r"^Save$", re.IGNORECASE))
-    if not save.count():
-        save = page.locator('[aria-label="Save"]')
-    if not save.count():
-        raise RuntimeError("Calendar's Save button could not be found; no change was submitted.")
-    save.first.click(timeout=10_000)
-    page.wait_for_timeout(1_000)
+def _load_agenda(
+    bridge: BrowserBridge,
+    controller: BraveController,
+    start_day: date,
+    days: int,
+) -> dict[str, Any]:
+    _ensure_bridge(bridge, controller, _calendar_url(start_day))
+    range_end = start_day + timedelta(days=days)
+    targets = [
+        {
+            "date": (start_day + timedelta(days=offset)).isoformat(),
+            "url": _calendar_url(start_day + timedelta(days=offset)),
+        }
+        for offset in range(days)
+    ]
+    result = bridge.request("calendar.read_agenda", {"targets": targets}, timeout=120)
+    if result.get("login_required"):
+        return {"login_required": True, "events": []}
+    records: list[EventRecord] = []
+    seen: set[tuple[str, date]] = set()
+    for raw in result.get("events", []):
+        if not isinstance(raw, dict):
+            continue
+        try:
+            fallback_day = date.fromisoformat(str(raw.get("date") or ""))
+        except ValueError:
+            continue
+        event_id = str(raw.get("event_id") or "")
+        label = str(raw.get("details") or "").strip()[:800]
+        if not event_id or not label:
+            continue
+        # Each target is Calendar's single-day view, so the requested day is
+        # authoritative even when an event label omits its date.
+        day = fallback_day
+        identity = (event_id, day)
+        if not start_day <= day < range_end or identity in seen:
+            continue
+        seen.add(identity)
+        event_start, event_end = _event_times(label, day)
+        records.append(EventRecord(event_id, day, label, event_start, event_end))
+    return {"login_required": False, "events": records}
 
 
 @dataclass
@@ -160,7 +206,7 @@ class CalendarAgendaTool(BaseTool):
     metadata: ToolMetadata = ToolMetadata(
         name="calendar_agenda",
         description=(
-            "Read a bounded Google Calendar agenda in the visible Brave automation profile. "
+            "Read a bounded Google Calendar agenda in the normal Brave profile. "
             "Defaults to today in Asia/Kolkata and supports at most 31 days."
         ),
         parameters={
@@ -177,7 +223,8 @@ class CalendarAgendaTool(BaseTool):
             "required": [],
         },
     )
-    automation: BraveAutomationSession | None = None
+    bridge: BrowserBridge | None = None
+    controller: BraveController | None = None
 
     def execute(self, arguments: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
         try:
@@ -187,9 +234,13 @@ class CalendarAgendaTool(BaseTool):
             return {"success": False, "error": f"Invalid calendar range: {exc}"}
         if not 1 <= days <= 31:
             return {"success": False, "error": "Calendar reads must cover 1 to 31 days."}
-        automation = self.automation or get_browser_automation()
         try:
-            result = automation.run(lambda browser: _load_agenda(browser, start_day, days), 120)
+            result = _load_agenda(
+                self.bridge or browser_bridge,
+                self.controller or BraveController(),
+                start_day,
+                days,
+            )
         except Exception as exc:  # noqa: BLE001
             return {"success": False, "error": str(exc)}
         if result["login_required"]:
@@ -197,7 +248,7 @@ class CalendarAgendaTool(BaseTool):
                 "success": False,
                 "login_required": True,
                 "error": (
-                    "Google Calendar is open in Thursday's Brave profile. Sign in once, then "
+                    "Google Calendar is open in your normal Brave profile. Sign in, then "
                     "retry the calendar request."
                 ),
             }
@@ -240,7 +291,8 @@ class CalendarCreateEventTool(BaseTool):
             "required": ["title", "start", "end"],
         },
     )
-    automation: BraveAutomationSession | None = None
+    bridge: BrowserBridge | None = None
+    controller: BraveController | None = None
 
     def execute(self, arguments: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
         title = str(arguments.get("title") or "").strip()
@@ -251,16 +303,17 @@ class CalendarCreateEventTool(BaseTool):
             return {"success": False, "error": f"Invalid event date-time: {exc}"}
         if not title or end <= start:
             return {"success": False, "error": "A title and an end after the start are required."}
-        automation = self.automation or get_browser_automation()
+        bridge = self.bridge or browser_bridge
+        controller = self.controller or BraveController()
         try:
-            agenda = automation.run(lambda browser: _load_agenda(browser, start.date(), 1), 90)
+            agenda = _load_agenda(bridge, controller, start.date(), 1)
         except Exception as exc:  # noqa: BLE001
             return {"success": False, "error": str(exc)}
         if agenda["login_required"]:
             return {
                 "success": False,
                 "login_required": True,
-                "error": "Sign in to Google Calendar in Thursday's Brave profile, then retry.",
+                "error": "Sign in to Google Calendar in your normal Brave profile, then retry.",
             }
         conflicts = [
             event.label
@@ -288,17 +341,16 @@ class CalendarCreateEventTool(BaseTool):
                 params["details" if key == "description" else key] = value
         url = "https://calendar.google.com/calendar/render?" + urllib.parse.urlencode(params)
 
-        def create(browser: Any) -> None:
-            page = _calendar_page(browser)
-            page.goto(url, wait_until="domcontentloaded", timeout=45_000)
-            if _login_required(page):
-                raise RuntimeError("Google Calendar login expired before the event was created.")
-            _save_calendar_page(page)
-
         try:
-            automation.run(create, 90)
+            result = bridge.request("calendar.create_event", {"url": url}, timeout=90)
         except Exception as exc:  # noqa: BLE001
             return {"success": False, "error": str(exc)}
+        if result.get("login_required"):
+            return {
+                "success": False,
+                "login_required": True,
+                "error": "Google Calendar login expired before the event was created.",
+            }
         return {
             "success": True,
             "created": True,
@@ -329,7 +381,8 @@ class CalendarUpdateEventTool(BaseTool):
             "required": ["event_ref"],
         },
     )
-    automation: BraveAutomationSession | None = None
+    bridge: BrowserBridge | None = None
+    controller: BraveController | None = None
 
     def execute(self, arguments: dict[str, Any], context: ExecutionContext) -> dict[str, Any]:
         reference = str(arguments.get("event_ref") or "").strip()
@@ -357,19 +410,21 @@ class CalendarUpdateEventTool(BaseTool):
                 return {"success": False, "error": f"Invalid event date-time: {exc}"}
             if parsed_end <= parsed_start:
                 return {"success": False, "error": "The event end must be after its start."}
-        automation = self.automation or get_browser_automation()
+        bridge = self.bridge or browser_bridge
+        controller = self.controller or BraveController()
         inspection_day = parsed_start.date() if parsed_start else record.day
         try:
-            def inspect(browser: Any) -> dict[str, Any]:
-                current = _load_agenda(browser, record.day, 1)
+
+            def inspect() -> dict[str, Any]:
+                current = _load_agenda(bridge, controller, record.day, 1)
                 target = (
                     current
                     if inspection_day == record.day or current["login_required"]
-                    else _load_agenda(browser, inspection_day, 1)
+                    else _load_agenda(bridge, controller, inspection_day, 1)
                 )
                 return {"current": current, "target": target}
 
-            inspection = automation.run(inspect, 120)
+            inspection = inspect()
         except Exception as exc:  # noqa: BLE001
             return {"success": False, "error": str(exc)}
         current = inspection["current"]
@@ -378,7 +433,7 @@ class CalendarUpdateEventTool(BaseTool):
             return {
                 "success": False,
                 "login_required": True,
-                "error": "Sign in to Google Calendar in Thursday's Brave profile, then retry.",
+                "error": "Sign in to Google Calendar in your normal Brave profile, then retry.",
             }
         if not any(event.event_id == record.event_id for event in current["events"]):
             return {
@@ -403,47 +458,55 @@ class CalendarUpdateEventTool(BaseTool):
         if not context.confirm(preview + "?"):
             return {"success": False, "cancelled": True, "error": "Calendar update cancelled."}
 
-        def update(browser: Any) -> None:
-            page = _calendar_page(browser)
-            page.goto(_calendar_url(record.day), wait_until="domcontentloaded", timeout=45_000)
-            if _login_required(page):
-                raise RuntimeError("Google Calendar login expired before the event was updated.")
-            page.wait_for_timeout(1_500)
-            event = page.locator(f'[data-eventid="{record.event_id}"]')
-            if not event.count():
-                raise RuntimeError("The selected event is no longer present on that date.")
-            event.first.click(timeout=10_000)
-            edit = page.get_by_label(re.compile(r"Edit event", re.IGNORECASE))
-            if not edit.count():
-                edit = page.get_by_role("button", name=re.compile(r"Edit", re.IGNORECASE))
-            if not edit.count():
-                raise RuntimeError("Calendar's Edit control could not be found; nothing changed.")
-            edit.first.click(timeout=10_000)
-            page.wait_for_timeout(500)
-            if "title" in supplied and not _fill_label(page, r"^Title$", supplied["title"]):
-                raise RuntimeError("Calendar's title field could not be found; nothing was saved.")
-            if parsed_start and parsed_end:
-                fields = (
-                    (r"Start date", parsed_start.strftime("%m/%d/%Y")),
-                    (r"Start time", parsed_start.strftime("%I:%M%p")),
-                    (r"End date", parsed_end.strftime("%m/%d/%Y")),
-                    (r"End time", parsed_end.strftime("%I:%M%p")),
-                )
-                for label, value in fields:
-                    if not _fill_label(page, label, value):
-                        raise RuntimeError(f"Calendar's {label.lower()} field could not be found.")
-            if "location" in supplied:
-                if not _fill_label(page, r"location", supplied["location"]):
-                    raise RuntimeError("Calendar's location field could not be found.")
-            if "description" in supplied:
-                if not _fill_label(page, r"description", supplied["description"]):
-                    raise RuntimeError("Calendar's description field could not be found.")
-            _save_calendar_page(page)
-
+        fields: list[dict[str, str]] = []
+        if "title" in supplied:
+            fields.append({"name": "title", "label": "^Title$", "value": supplied["title"]})
+        if parsed_start and parsed_end:
+            fields.extend(
+                [
+                    {
+                        "name": "start date",
+                        "label": "Start date",
+                        "value": parsed_start.strftime("%m/%d/%Y"),
+                    },
+                    {
+                        "name": "start time",
+                        "label": "Start time",
+                        "value": parsed_start.strftime("%I:%M%p"),
+                    },
+                    {
+                        "name": "end date",
+                        "label": "End date",
+                        "value": parsed_end.strftime("%m/%d/%Y"),
+                    },
+                    {
+                        "name": "end time",
+                        "label": "End time",
+                        "value": parsed_end.strftime("%I:%M%p"),
+                    },
+                ]
+            )
+        for name in ("location", "description"):
+            if name in supplied:
+                fields.append({"name": name, "label": name, "value": supplied[name]})
         try:
-            automation.run(update, 120)
+            result = bridge.request(
+                "calendar.update_event",
+                {
+                    "url": _calendar_url(record.day),
+                    "event_id": record.event_id,
+                    "fields": fields,
+                },
+                timeout=120,
+            )
         except Exception as exc:  # noqa: BLE001
             return {"success": False, "error": str(exc)}
+        if result.get("login_required"):
+            return {
+                "success": False,
+                "login_required": True,
+                "error": "Google Calendar login expired before the event was updated.",
+            }
         return {
             "success": True,
             "updated": True,

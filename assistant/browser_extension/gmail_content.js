@@ -148,32 +148,25 @@ async function readInbox(maxMessages) {
   };
 }
 
-async function execute(command) {
-  if (command.action !== "gmail_read_inbox") {
-    throw new Error(`Unsupported browser action: ${command.action}`);
+async function execute(action, payload) {
+  if (action === "gmail.read_inbox") {
+    const maxMessages = Math.max(1, Math.min(Number(payload?.max_messages) || 20, 20));
+    return readInbox(maxMessages);
   }
-  const maxMessages = Math.max(1, Math.min(Number(command.payload?.max_messages) || 20, 20));
-  return readInbox(maxMessages);
+  if (action === "gmail.open_draft") {
+    if (location.hostname !== "mail.google.com") return { login_required: true };
+    const subject = await waitForVisible('input[name="subjectbox"], input[placeholder="Subject"]', 20000);
+    if (!subject) throw new Error("Gmail opened, but the populated draft could not be verified.");
+    return { login_required: false, ready: true };
+  }
+  throw new Error(`Unsupported Gmail action: ${action}`);
 }
 
-const bridgeFrame = document.createElement("iframe");
-bridgeFrame.hidden = true;
-bridgeFrame.setAttribute("aria-hidden", "true");
-bridgeFrame.src = chrome.runtime.getURL("bridge_frame.html");
-(document.documentElement || document.body).appendChild(bridgeFrame);
-
-window.addEventListener("message", async (event) => {
-  if (event.source !== bridgeFrame.contentWindow) return;
-  const command = event.data;
-  if (!command || command.type !== "thursday-command") return;
-  let result;
-  try {
-    result = { id: command.id, success: true, data: await execute(command) };
-  } catch (error) {
-    result = { id: command.id, success: false, error: String(error?.message || error) };
-  }
-  bridgeFrame.contentWindow?.postMessage(
-    { type: "thursday-command-result", ...result },
-    chrome.runtime.getURL("").slice(0, -1)
-  );
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "thursday.action") return false;
+  void execute(message.action, message.payload || {})
+    .then((result) => sendResponse(result))
+    .catch((error) => sendResponse({ error: String(error?.message || error) }));
+  return true;
 });
+void chrome.runtime.sendMessage({ type: "thursday.wake" });

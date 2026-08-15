@@ -182,6 +182,21 @@ else
     wait_for "Thursday server" 60 thursday_healthy || true
 fi
 
+# Ensure the normal Brave profile has Thursday's persistent managed helper.
+# This is scoped to the desktop launcher so headless/server/test runs never
+# trigger a privilege prompt.
+if command -v brave >/dev/null 2>&1 || command -v brave-browser >/dev/null 2>&1; then
+    if [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
+        if ! "$PROJECT_DIR/.venv/bin/python" -m assistant.integrations.brave_helper --status \
+            | jq -e '.current == true' >/dev/null 2>&1; then
+            log "Installing or updating the Thursday Brave helper (one-time authorization)..."
+            if ! "$PROJECT_DIR/.venv/bin/python" -m assistant.integrations.brave_helper --install; then
+                log "Warning: Brave helper installation was cancelled or failed." >&2
+            fi
+        fi
+    fi
+fi
+
 # ---------------------------------------------------------------------------
 # 3. Open exactly one window on :5005 (or focus the existing one)
 # ---------------------------------------------------------------------------

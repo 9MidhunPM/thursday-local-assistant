@@ -44,6 +44,19 @@ def _is_retry_follow_up(text: str) -> bool:
     }
 
 
+def _is_contextual_action_follow_up(text: str) -> bool:
+    normalized = " ".join((text or "").casefold().split()).strip(".!?")
+    return normalized in {
+        "open it",
+        "show it",
+        "list them",
+        "do it",
+        "use it",
+        "use calendar agenda",
+        "use calender agenda",
+    }
+
+
 @dataclass(frozen=True)
 class AgentConfig:
     max_tool_steps: int
@@ -95,7 +108,7 @@ class Agent:
 
         # Cache a per-turn filtered tool list for smarter / smaller prompts.
         selection_text = user_text
-        if _is_retry_follow_up(user_text):
+        if _is_retry_follow_up(user_text) or _is_contextual_action_follow_up(user_text):
             # A terse retry must keep the domain tool from the failed request.
             # Scan past earlier retry-only turns (which may have selected only
             # always-on tools) to the last substantive user instruction.

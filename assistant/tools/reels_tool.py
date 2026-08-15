@@ -1,78 +1,78 @@
 from __future__ import annotations
 
-import subprocess
 import threading
 from dataclasses import dataclass
 from typing import Any
 
 from assistant.agent.context import ExecutionContext
+from assistant.integrations.browser_bridge import BrowserBridge, browser_bridge
 from assistant.tools.base import BaseTool, ToolMetadata
 from assistant.tools.browser_control import BraveController
-from assistant.tools.ui_automation import instagram_is_active
 
 REELS_URL = "https://www.instagram.com/reels/"
+
+
 class ReelsWatcher:
+    """Track the extension-owned Reels timer without synthesizing OS key presses."""
+
     def __init__(
         self,
         controller: BraveController | None = None,
+        bridge: BrowserBridge | None = None,
         interval_seconds: float = 15,
     ) -> None:
         self.controller = controller or BraveController()
+        self.bridge = bridge or browser_bridge
         self.interval_seconds = interval_seconds
-        self._stop = threading.Event()
         self._lock = threading.Lock()
-        self._thread: threading.Thread | None = None
+        self._running = False
         self.last_error: str | None = None
 
     @property
     def running(self) -> bool:
-        return bool(self._thread and self._thread.is_alive())
+        with self._lock:
+            return self._running
+
+    def _connect(self) -> tuple[bool, str | None]:
+        if self.bridge.status().get("connected"):
+            return True, None
+        opened, error = self.controller.open_url(REELS_URL, title_hint="Instagram")
+        if not opened:
+            return False, error or "Instagram could not be opened in Brave."
+        if not self.bridge.wait_until_connected(timeout=20):
+            return False, "Thursday's managed Brave helper did not connect."
+        return True, None
 
     def start(self) -> tuple[bool, str | None, bool]:
         with self._lock:
-            if self.running:
-                return True, None, True
-
-            opened, error = self.controller.open_url(REELS_URL, title_hint="Instagram")
-            if not opened:
-                return False, error or "Instagram could not be opened in Brave.", False
-            self._stop.clear()
-            self.last_error = None
-            self._thread = threading.Thread(
-                target=self._loop,
-                name="thursday-reels-watcher",
-                daemon=True,
+            already_running = self._running
+        connected, error = self._connect()
+        if not connected:
+            return False, error, already_running
+        try:
+            result = self.bridge.request(
+                "instagram.reels.start",
+                {"interval_seconds": self.interval_seconds},
+                timeout=45,
             )
-            self._thread.start()
-            return True, None, False
+        except Exception as exc:  # noqa: BLE001
+            self.last_error = str(exc)
+            return False, self.last_error, already_running
+        with self._lock:
+            self._running = bool(result.get("running", True))
+        self.last_error = None
+        return True, None, bool(result.get("already_running", already_running))
 
-    def _loop(self) -> None:
-        while not self._stop.wait(self.interval_seconds):
+    def stop(self, *, notify_extension: bool = True) -> bool:
+        with self._lock:
+            was_running = self._running
+            self._running = False
+        if notify_extension and self.bridge.status().get("connected"):
             try:
-                self._advance_if_active()
+                result = self.bridge.request("instagram.reels.stop", {}, timeout=10)
+                return bool(result.get("stopped", was_running))
             except Exception as exc:  # noqa: BLE001
                 self.last_error = str(exc)
-
-    @staticmethod
-    def _advance_if_active() -> bool:
-        if not instagram_is_active():
-            return False
-        result = subprocess.run(
-            ["wtype", "-k", "DOWN"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        return result.returncode == 0
-
-    def stop(self) -> bool:
-        with self._lock:
-            was_running = self.running
-            self._stop.set()
-            thread = self._thread
-        if thread:
-            thread.join(timeout=2)
         return was_running
 
 
@@ -84,8 +84,8 @@ class WatchReelsTool(BaseTool):
     metadata: ToolMetadata = ToolMetadata(
         name="watch_reels",
         description=(
-            "Open Instagram Reels in Thursday's visible Brave profile and advance every "
-            "15 seconds while Instagram remains focused. Runs until stop_watching_reels."
+            "Open Instagram Reels in the normal Brave profile and advance every 15 seconds "
+            "only while its page is visible and focused. Runs until stop_watching_reels."
         ),
         parameters={"type": "object", "properties": {}, "required": []},
     )
@@ -100,7 +100,7 @@ class WatchReelsTool(BaseTool):
             "already_running": already_running,
             "interval_seconds": 15,
             "output": (
-                "Instagram Reels is open. Auto-scroll is running and will pause whenever "
+                "Instagram Reels is open. Auto-scroll is running and pauses whenever "
                 "Instagram is not focused."
             ),
         }
@@ -125,7 +125,7 @@ class StopWatchingReelsTool(BaseTool):
 
 
 def stop_reels_watcher() -> None:
-    _WATCHER.stop()
+    _WATCHER.stop(notify_extension=False)
 
 
 def get_tools() -> list[BaseTool]:
