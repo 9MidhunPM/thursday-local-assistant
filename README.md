@@ -36,6 +36,17 @@ native system and media tools, and a loopback-only local server. The goal is a p
 layer that stays observable: every action has a tool behind it, a visible result, and a boundary you
 can understand.
 
+## Watch Thursday in action
+
+These are real desktop demos, not mocked product tours. They show the assistant operating through
+its visible tool layer, with the same guard rails and native integrations described in this README.
+
+- [Desktop workflows: file discovery, Gmail drafts, and Calendar automation](https://drive.google.com/file/d/1VBo7DjoN34oAEptECPhUGLXbTuoWGxJp/view?usp=drive_link) — Thursday finds the right files, uses the signed-in browser workflow for Gmail, and prepares Calendar actions through its confirmation flow.
+- [System awareness and media control: live vitals and Spotify](https://drive.google.com/file/d/13Sw3TUYcaSJo1eIMX1XZZqWVLdZNHmjq/view?usp=drive_link) — Thursday reads machine health and controls the dedicated Spotify integration without treating another media player as a fallback.
+- [Native desktop integration: Thursday inside the OS](https://drive.google.com/file/d/1Wd_5lowulWIXl_skxhNKPAqPBthTayDT/view?usp=drive_link) — a look at the launcher, Hyprland controls, and Quickshell voice overlay that make Thursday a Linux desktop companion rather than a browser-only wrapper.
+
+[Browse the complete demo collection in Google Drive](https://drive.google.com/drive/folders/1s2c5p86JadB3azm1t-a7LQFfNALwEmIG?usp=sharing).
+
 | Interface | How |
 |-----------|-----|
 | **CLI** | Fast terminal chat (default) |
