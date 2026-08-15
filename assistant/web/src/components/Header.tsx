@@ -8,6 +8,7 @@ interface Props {
   onToggleTts: (enabled: boolean) => void
   onClear: () => void
   onToggleLogs: () => void
+  onOpenCodexProject: () => void
   onToggleSidebar: () => void
   health: HealthInfo
   conversationCount: number
@@ -37,6 +38,7 @@ export default function Header({
   onToggleTts,
   onClear,
   onToggleLogs,
+  onOpenCodexProject,
   onToggleSidebar,
   health,
   conversationCount,
@@ -79,6 +81,9 @@ export default function Header({
         )}
         <button className="view-logs-btn" onClick={onToggleLogs}>
           Logs
+        </button>
+        <button className="view-logs-btn codex-project-btn" onClick={onOpenCodexProject}>
+          <span aria-hidden="true">⌘</span> Codex Project
         </button>
         <div className="toggle-container">
           <span>Voice</span>

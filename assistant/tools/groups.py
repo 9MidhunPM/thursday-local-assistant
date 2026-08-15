@@ -36,6 +36,8 @@ TOOL_GROUPS: dict[str, str] = {
     "search_apps": "apps",
     # Terminal
     "run_terminal_command": "terminal",
+    # Codex project workspace
+    "codex_orchestrate": "codex",
     # Web
     "web_search": "web",
     "fetch_page": "web",
@@ -145,6 +147,10 @@ KEYWORD_GROUPS: list[tuple[tuple[str, ...], frozenset[str]]] = [
     (
         ("shell", "bash", "command", "run ", "execute", "script", "pip ", "npm ", "git "),
         frozenset({"terminal"}),
+    ),
+    (
+        ("codex", "build", "project", "implement", "scaffold", "debug", "develop"),
+        frozenset({"codex", "files"}),
     ),
     (
         ("speak", "say ", "voice", "tts"),

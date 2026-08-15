@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f5f7f2" />
+    <title>Ritual — Habit tracker</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#today" aria-label="Ritual home"><span class="brand-mark">r</span><span>ritual</span></a>
+        <nav aria-label="Habit views">
+          <a class="nav-link active" href="#today"><span aria-hidden="true">◌</span> Today <b id="todayCount">0</b></a>
+          <a class="nav-link" href="#rhythm"><span aria-hidden="true">⌁</span> My rhythm</a>
+          <a class="nav-link" href="#insights"><span aria-hidden="true">✦</span> Insights</a>
+        </nav>
+        <div class="sidebar-bottom">
+          <div class="weekly-mini">
+            <p class="side-label">THIS WEEK</p>
+            <div class="mini-progress"><span id="miniProgress"></span></div>
+            <p id="weekSummary">A fresh start awaits.</p>
+          </div>
+          <button class="text-button" id="resetButton" type="button">Reset demo data</button>
+        </div>
+      </aside>
+
+      <section class="content" id="today">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="dateLine">TODAY</p>
+            <h1>Good morning, Midhun.</h1>
+            <p class="subtitle" id="welcomeText">Small promises add up.</p>
+          </div>
+          <div class="top-actions">
+            <button class="icon-button" id="themeToggle" type="button" aria-label="Switch to dark mode" title="Switch theme">☾</button>
+            <button class="profile" type="button" aria-label="Open profile">MP</button>
+          </div>
+        </header>
+
+        <section class="checkin-card" aria-labelledby="checkinTitle">
+          <div class="checkin-copy">
+            <p class="eyebrow">DAILY CHECK-IN</p>
+            <h2 id="checkinTitle">How are you arriving today?</h2>
+            <p>Take a breath and set the tone for your day.</p>
+          </div>
+          <div class="mood-options" role="group" aria-label="Choose today's mood">
+            <button data-mood="rough" type="button"><span>😮‍💨</span><small>Low</small></button>
+            <button data-mood="steady" type="button"><span>🙂</span><small>Steady</small></button>
+            <button data-mood="bright" type="button"><span>✨</span><small>Bright</small></button>
+          </div>
+          <p class="checkin-note" id="checkinNote" aria-live="polite">Not checked in yet.</p>
+        </section>
+
+        <section class="dashboard-grid" aria-label="Daily progress">
+          <article class="score-card">
+            <div class="score-ring" id="scoreRing"><strong id="scoreValue">0%</strong><span>today</span></div>
+            <div><p class="eyebrow">DAILY PROGRESS</p><h2 id="scoreTitle">Let’s begin</h2><p id="scoreDetail">0 of 0 rituals complete</p></div>
+          </article>
+          <article class="streak-card">
+            <span class="streak-flame" aria-hidden="true">♨</span>
+            <div><p class="eyebrow">CURRENT STREAK</p><strong id="streakValue">0 days</strong><p id="streakCopy">Your consistency will show up here.</p></div>
+          </article>
+        </section>
+
+        <section class="habits-section" id="rhythm" aria-labelledby="habitsTitle">
+          <div class="section-heading">
+            <div><p class="eyebrow">YOUR RHYTHM</p><h2 id="habitsTitle">Today’s rituals</h2></div>
+            <button class="add-habit-button" id="openHabitForm" type="button"><span>＋</span> New habit</button>
+          </div>
+          <ul class="habit-list" id="habitList" aria-live="polite"></ul>
+          <p class="empty-state" id="emptyState" hidden>Add a ritual to begin building your rhythm.</p>
+        </section>
+
+        <section class="insights" id="insights" aria-labelledby="insightsTitle">
+          <div class="section-heading compact"><div><p class="eyebrow">LAST 7 DAYS</p><h2 id="insightsTitle">Your week at a glance</h2></div><span class="week-rate" id="weekRate">0% complete</span></div>
+          <div class="week-chart" id="weekChart" aria-label="Weekly habit completion chart"></div>
+          <p class="insight-copy" id="insightCopy">Check off a ritual today to start your story.</p>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="habitDialog">
+      <form method="dialog" class="habit-form" id="habitForm">
+        <div class="dialog-heading"><div><p class="eyebrow">NEW RITUAL</p><h2>Make it easy to start.</h2></div><button class="close-dialog" value="cancel" aria-label="Close form">×</button></div>
+        <label for="habitName">Habit name</label>
+        <input id="habitName" name="habitName" maxlength="48" required placeholder="e.g. Read before bed" autocomplete="off" />
+        <label for="habitIcon">Choose a symbol</label>
+        <div class="icon-picker" id="iconPicker" role="group" aria-label="Habit symbol">
+          <button class="selected" data-icon="☀" type="button">☀</button><button data-icon="◌" type="button">◌</button><button data-icon="♧" type="button">♧</button><button data-icon="⌁" type="button">⌁</button><button data-icon="✎" type="button">✎</button><button data-icon="♡" type="button">♡</button>
+        </div>
+        <div class="form-actions"><button class="cancel-button" value="cancel" type="submit">Cancel</button><button class="save-button" value="default" type="submit">Add ritual</button></div>
+      </form>
+    </dialog>
+
+    <template id="habitTemplate">
+      <li class="habit-item">
+        <button class="habit-check" type="button"><span class="check-mark">✓</span></button>
+        <span class="habit-icon" aria-hidden="true"></span>
+        <div class="habit-copy"><strong class="habit-name"></strong><span class="habit-meta"></span></div>
+        <span class="habit-streak"></span>
+        <button class="delete-habit" type="button" aria-label="Delete habit">×</button>
+      </li>
+    </template>
+    <script src="app.js"></script>
+  </body>
+</html>

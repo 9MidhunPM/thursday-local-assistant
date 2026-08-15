@@ -57,6 +57,48 @@ def _is_contextual_action_follow_up(text: str) -> bool:
     }
 
 
+def _parse_codex_launch(text: str) -> dict[str, str] | None:
+    """Read the UI-only launch envelope without asking the chat model to relay it."""
+    prefix = "[codex-launch]"
+    if not text.casefold().startswith(prefix):
+        return None
+    try:
+        payload = json.loads(text[len(prefix) :].strip())
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    project_name = payload.get("project_name")
+    brief = payload.get("brief")
+    model = payload.get("model")
+    if not isinstance(project_name, str) or not isinstance(brief, str):
+        return None
+    if model is not None and not isinstance(model, str):
+        return None
+    return {
+        "project_name": project_name,
+        "brief": brief,
+        "model": model or "",
+    }
+
+
+def _build_codex_project_prompt(brief: str) -> str:
+    return (
+        "You are the lead implementation agent for Thursday. "
+        "Work only in the current workspace.\n\n"
+        "Project brief:\n"
+        f"{brief.strip()}\n\n"
+        "Execution contract:\n"
+        "1. Inspect the existing project before editing.\n"
+        "2. If the brief is materially ambiguous, ask the user concise questions in this terminal "
+        "before choosing a product direction.\n"
+        "3. Implement the agreed scope with a polished, accessible interface.\n"
+        "4. Run relevant tests or a local verification path.\n"
+        "5. Finish with changed files, how to run the project, and verification results.\n"
+        "Do not access parent directories or delete unrelated files."
+    )
+
+
 @dataclass(frozen=True)
 class AgentConfig:
     max_tool_steps: int
@@ -105,6 +147,35 @@ class Agent:
     ) -> str:
         self._loggers.user.info(redact_private_request_text(user_text))
         self._short_term.add(Message(role="user", content=user_text))
+
+        launch = _parse_codex_launch(user_text)
+        if launch:
+            arguments: dict[str, Any] = {
+                "task": _build_codex_project_prompt(launch["brief"]),
+                "project_name": launch["project_name"],
+            }
+            if launch["model"]:
+                arguments["model"] = launch["model"]
+            if on_tool_call:
+                on_tool_call("codex_orchestrate", arguments)
+            result = self._execute_tool("codex_orchestrate", arguments, on_tool_chunk)
+            if on_tool_result:
+                on_tool_result(result)
+            output = str(result.get("output") or "").strip()
+            if result.get("success"):
+                workspace = result.get("workspace", "the Codex workspace")
+                final = f"Codex started an interactive project session in {workspace}."
+                if output:
+                    final += f"\n\n{output}"
+            else:
+                error = result.get("error", "Unknown error.")
+                final = f"Codex could not start the project session: {error}"
+                if output:
+                    final += f"\n\n{output}"
+            self._short_term.add(Message(role="assistant", content=final))
+            log_model_interaction(self._loggers.model, user_text, final)
+            self._maybe_extract(user_text, final)
+            return final
 
         # Cache a per-turn filtered tool list for smarter / smaller prompts.
         selection_text = user_text

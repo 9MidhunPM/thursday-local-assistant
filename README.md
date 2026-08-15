@@ -1,13 +1,48 @@
 # Thursday
 
-A **local-first, JARVIS-style AI assistant** that can also use **cloud API keys** when you want smarter models without a GPU.
+**A desktop AI that does the work where you can see it.**
 
-Thursday talks to any **OpenAI-compatible** endpoint (llama.cpp, OpenAI, OpenRouter, Groq, Together, DeepSeek, Mistral, or custom), keeps long- and short-term memory, and can act on your machine through a rich toolset (files, apps, web, Spotify, system, voice, and more).
+Thursday is a local-first, JARVIS-style assistant for Linux. It connects an OpenAI-compatible
+model to real desktop capabilities: searching and opening files, controlling apps and media,
+researching the web, working with Gmail and Calendar, remembering useful context, responding by
+voice, and now launching contained Codex project sessions from the same interface.
+
+The important distinction is simple: Thursday does not stop at telling you what command to run.
+For action requests, it selects a purpose-built tool, shows the call in the interface, executes it,
+and reports the result. Local llama.cpp and cloud providers share the same agent, memory, safety,
+and UI layers.
+
+## Why Thursday exists
+
+Thursday started as a deliberately **local-only** experiment: could an assistant feel genuinely
+useful without becoming another cloud tab that asks you to copy commands, switch windows, and do
+the work yourself? The first version ran against llama.cpp on my own hardware. Privacy, ownership,
+and the freedom to work offline were the point—not features bolted on afterward.
+
+That beginning shaped the project. I wanted an assistant that could live where my work actually
+happens: in the terminal, file manager, music player, browser, notifications, and keyboard flow. A
+chat response is only half useful when the real task is to find a file, open the right app, draft an
+email, check a calendar, or adjust the system while staying focused.
+
+As the project grew, local inference remained the foundation, but capability became a practical
+choice rather than an ideology. Thursday now supports cloud OpenAI-compatible models when a faster
+or stronger model is worth using, while keeping the same local-first architecture: one agent loop,
+the same visible tools, local memory, explicit safety controls, and the option to return to a fully
+local llama.cpp setup at any time.
+
+It is also intentionally more than a web wrapper. The web interface is the control surface, but
+Thursday is wired into Linux through desktop entries, Hyprland hotkeys, a Quickshell voice overlay,
+native system and media tools, and a loopback-only local server. The goal is a personal operating
+layer that stays observable: every action has a tool behind it, a visible result, and a boundary you
+can understand.
 
 | Interface | How |
 |-----------|-----|
 | **CLI** | Fast terminal chat (default) |
 | **Web UI** | React app over HTTP + SSE at `http://127.0.0.1:5005` |
+
+[Read the architecture](docs/ARCHITECTURE.md) · [Run the complete project demo](docs/DEMO.md) ·
+[Explore the Codex workspace](codex_workspace/README.md)
 
 > Secrets stay in `.env`. Inference stays on your machine unless you opt into a cloud provider.
 
@@ -16,13 +51,31 @@ Thursday talks to any **OpenAI-compatible** endpoint (llama.cpp, OpenAI, OpenRou
 ## Features
 
 - 🧠 **Local or cloud LLM** — llama.cpp *or* API keys (OpenAI / OpenRouter / Groq / …)
-- 🛠️ **Tool-using agent** — indexed whole-PC file search, Thunar reveal, guarded shell, source-backed web research, visual website reviews, Gmail drafts, Spotify, memory, voice, …
+- 🛠️ **Tool-using agent** — indexed whole-PC file search, Thunar reveal, guarded shell, source-backed web research, visual website reviews, Gmail drafts, Spotify, memory, voice, and more
+- 🧑‍💻 **Codex project studio** — refine a brief, choose a Codex model, and open an isolated project session in Kitty
 - 💾 **Memory** — SQLite long-term + session history + automatic fact extraction
 - 🎯 **Smart tool filtering** — sends only relevant tools each turn (saves context)
 - 🎙️ **Voice** — Edge TTS + SpeechRecognition (optional)
 - ⌨️ **Global hotkeys** — Super+C opens Thursday; hold Super+Alt to push-to-talk with a live transcript overlay
-- 🔒 **Safer defaults** — path sandboxes, shell policy, optional API token, loopback bind guard
+- 🔒 **Explicit guard rails** — path boundaries, shell policy, confirmation gates, secret redaction, optional API token, and a loopback bind guard
 - 🌐 **Web UI** — streaming, tool cards, conversations, voice visualizer, action confirmations
+
+## What Thursday can do
+
+| Capability | What it looks like in practice |
+|-----------|--------------------------------|
+| **Desktop control** | Open or focus applications, manage windows, adjust volume and brightness, send notifications, inspect system health, and work with the clipboard. |
+| **Files and terminal** | Search indexed filenames across the PC, inspect content, reveal results in Thunar, write within configured roots, and run guarded terminal commands. |
+| **Live research** | Search the web, extract readable pages, produce source-backed answers, review websites with Playwright, and open visible Google or YouTube results when asked. |
+| **Personal workflows** | Draft Gmail messages without sending, summarize the newest inbox rows, read or change Calendar events with confirmation, and use the signed Brave Helper with existing sessions. |
+| **Media and focus** | Find and control Spotify specifically, play YouTube only when requested, run timers, translate text, and optionally manage focused Instagram Reels viewing. |
+| **Memory and conversation** | Keep named preferences, facts, entity profiles, conversation history, and short-term context in a local SQLite store with explicit delete controls. |
+| **Voice and presence** | Accept microphone input, stream responses, speak through Edge TTS, and expose push-to-talk through a non-focus-stealing Quickshell overlay. |
+| **Software projects** | Turn a brief into a contained Codex CLI session, select Terra/Luna/Sol or a custom model, and keep each generated project in its own workspace. |
+
+Thursday discovers tool modules at runtime and uses intent-based filtering, so the model receives a
+small relevant toolset instead of the entire catalog on every turn. Tool calls, streaming progress,
+results, and confirmation requests remain visible in the interface.
 
 ---
 
@@ -131,6 +184,27 @@ it also stops the llama.cpp server it manages. The default desktop configuration
 | User name | `.env` → `THURSDAY_USER_NAME` | Injected into system prompt |
 | Model selection | `./model.sh` | Test/switch GGUFs without editing `.env` |
 
+## Building projects with Codex
+
+The **Codex Project** button turns Thursday into a project launchpad without mixing generated work
+into the assistant source tree.
+
+1. Open Thursday and select **Codex Project**.
+2. Choose a workspace name such as `portfolio-dashboard`.
+3. Choose the Codex default or an explicit Terra, Luna, Sol, or custom model identifier.
+4. Use **Refine with Thursday** when the product, stack, or design needs clarification, or choose
+   **Open Codex in Kitty** when the brief is ready.
+5. Thursday validates the request and opens Codex inside `codex_workspace/<project-name>`.
+
+Project names accept lowercase letters, numbers, and hyphens. Path-like names are rejected. The
+child Codex process runs with a workspace-write sandbox, without Thursday's OpenAI provider key,
+and cannot receive approval to expand its filesystem access. Thursday reports that the interactive
+session has started; the visible Kitty terminal remains the source of truth for progress and
+completion.
+
+The repository includes [Ritual](codex_workspace/todo-app/README.md), a polished local habit tracker,
+as a concrete demo artifact produced through this workflow.
+
 ---
 
 ## Switching local models
@@ -202,6 +276,23 @@ assistant/
 └── web/             # React + Vite UI
 ```
 
+At runtime, the request path is:
+
+```text
+CLI / Web UI / Voice
+        ↓
+HTTP + SSE server and conversation state
+        ↓
+Agent loop → smart tool selection → confirmation policy
+        ↓                    ↓
+OpenAI-compatible model      Built-in tools / Brave Helper / Codex CLI
+        ↓                    ↓
+Streamed answer, visible tool result, and persisted conversation
+```
+
+See [Architecture and internals](docs/ARCHITECTURE.md) for component boundaries, data flow,
+security controls, integrations, and extension points.
+
 ---
 
 ## Safety notes
@@ -213,6 +304,11 @@ Thursday can run shell commands and touch files on **your** machine.
 - Path tools use `read_roots` / `write_roots` (override with `THURSDAY_*_ROOTS`).
 - Shell policy: denylist + optional whitelist; dangerous actions can require **web confirmation**.
 - Power user: `THURSDAY_ALLOW_SHELL=true`, `THURSDAY_UNRESTRICTED_PATHS=1`.
+
+The checked-in `assistant/config/config.json` reflects the author's power-user desktop setup and
+allows shell access plus broad read roots. It is not the recommended shared-machine profile. Start
+from `assistant/config/config.safe.example.json`, then expand permissions intentionally for the
+machine where Thursday will run.
 
 ### Desktop integration packages (Arch Linux)
 
@@ -276,6 +372,22 @@ npm run build      # → assistant/web/dist
 pip install -e ".[dev]"
 python -m pytest assistant/tests/
 ```
+
+For the release/demo gate, also build the web client and run the focused Codex tests:
+
+```bash
+cd assistant/web && npm ci && npm run build
+cd ../..
+python -m pytest assistant/tests/test_codex_orchestrator_tool.py \
+  assistant/tests/test_codex_routing.py assistant/tests/test_tool_groups.py
+```
+
+## Demo
+
+The strongest demo tells one connected story: Thursday understands a request, chooses the right
+capability, asks before consequential actions, remembers context, and can hand a complete software
+brief to Codex without hiding the work. The full presenter script, prompts, reset steps, fallback
+paths, timing, and recording checklist live in [docs/DEMO.md](docs/DEMO.md).
 
 ---
 

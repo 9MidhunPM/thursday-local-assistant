@@ -124,6 +124,32 @@
       transition: color 0.15s;
     }
     .close-logs-btn:hover { color: white; }
+    .codex-modal-card {
+      width: min(620px, calc(100vw - 32px));
+      background: #101622;
+      border: 1px solid rgba(56, 189, 248, 0.28);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+    }
+    .codex-modal-card h2 { font-family: 'Outfit', sans-serif; font-size: 24px; }
+    .codex-modal-card p { color: var(--text-muted); margin-top: 6px; line-height: 1.5; }
+    .codex-form { display: grid; gap: 14px; margin-top: 22px; }
+    .codex-field { display: grid; gap: 7px; }
+    .codex-field label { color: #b9c6da; font-size: 13px; font-weight: 600; }
+    .codex-field input, .codex-field select, .codex-field textarea {
+      width: 100%; border: 1px solid var(--panel-border); border-radius: var(--radius-sm);
+      background: rgba(255,255,255,0.04); color: var(--text-main); padding: 11px 12px;
+      font: inherit;
+    }
+    .codex-field textarea { min-height: 128px; resize: vertical; line-height: 1.45; }
+    .codex-field input:focus-visible, .codex-field select:focus-visible, .codex-field textarea:focus-visible,
+    .codex-action:focus-visible { outline: 2px solid var(--accent-1); outline-offset: 2px; }
+    .codex-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+    .codex-action { border: 1px solid var(--panel-border); border-radius: var(--radius-sm); cursor: pointer; padding: 10px 14px; color: var(--text-main); background: rgba(255,255,255,0.05); font: inherit; }
+    .codex-action.primary { border: none; background: var(--accent-gradient); font-weight: 700; }
+    .codex-modal { z-index: 60; }
+    .codex-modal.visible { opacity: 1; pointer-events: auto; }
     .view-logs-btn {
       background: transparent;
       border: 1px solid var(--panel-border);
@@ -733,6 +759,7 @@
     </div>
     <div class="controls-container">
       <button class="view-logs-btn" onclick="toggleLogs()">View Logs</button>
+      <button class="view-logs-btn" type="button" onclick="openCodexProject()">Codex Project</button>
       <div class="toggle-container">
         <span>Voice</span>
         <label class="switch">
@@ -787,6 +814,40 @@
     <div class="logs-container" id="logsContainerModal"></div>
   </div>
 
+  <div class="logs-modal codex-modal" id="codexModal" role="dialog" aria-modal="true" aria-labelledby="codexModalTitle" aria-hidden="true">
+    <section class="codex-modal-card" tabindex="-1">
+      <button class="close-logs-btn" type="button" onclick="closeCodexProject()" aria-label="Close Codex project setup" style="float:right">×</button>
+      <h2 id="codexModalTitle">Start or continue a Codex project</h2>
+      <p>Thursday can refine the brief with you first, then open a visible Kitty session for Codex.</p>
+      <form class="codex-form" id="codexProjectForm">
+        <div class="codex-field">
+          <label for="codexProjectName">Project workspace</label>
+          <input id="codexProjectName" list="codexProjectHistory" pattern="[a-z0-9][a-z0-9-]{0,62}" placeholder="habit-tracker" required>
+          <datalist id="codexProjectHistory"></datalist>
+        </div>
+        <div class="codex-field">
+          <label for="codexModel">Codex model</label>
+          <select id="codexModel">
+            <option value="">Use my Codex default</option>
+            <option value="gpt-5.6-terra">GPT-5.6 Terra</option>
+            <option value="gpt-5.6-luna">GPT-5.6 Luna</option>
+            <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
+            <option value="custom">Custom model identifier</option>
+          </select>
+          <input id="codexCustomModel" placeholder="Model identifier" pattern="[A-Za-z0-9._:-]{1,100}" hidden>
+        </div>
+        <div class="codex-field">
+          <label for="codexBrief">What should Codex build or change?</label>
+          <textarea id="codexBrief" placeholder="A habit tracker with daily check-ins, streaks, reminders…" required></textarea>
+        </div>
+        <div class="codex-actions">
+          <button class="codex-action" type="button" onclick="askThursdayToPlanCodexProject()">Refine with Thursday</button>
+          <button class="codex-action primary" type="submit">Open Codex in Kitty</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
   <script>
     // ==========================
     // DOM REFS
@@ -798,6 +859,14 @@
     const statusText = document.getElementById('statusText');
     const statusDot = document.getElementById('statusDot');
     const ttsToggle = document.getElementById('ttsToggle');
+    const codexModal = document.getElementById('codexModal');
+    const codexProjectForm = document.getElementById('codexProjectForm');
+    const codexProjectName = document.getElementById('codexProjectName');
+    const codexProjectHistory = document.getElementById('codexProjectHistory');
+    const codexModel = document.getElementById('codexModel');
+    const codexCustomModel = document.getElementById('codexCustomModel');
+    const codexBrief = document.getElementById('codexBrief');
+    let codexPreviousFocus = null;
 
     let currentAgentBubble = null;
     let lastAgentContentDiv = null;
@@ -826,6 +895,71 @@
           console.warn(err);
         }
       }
+    });
+
+    function savedCodexProjects() {
+      try { return JSON.parse(localStorage.getItem('codexProjects') || '[]'); }
+      catch (_) { return []; }
+    }
+
+    function rememberCodexProject(name) {
+      const projects = [name, ...savedCodexProjects().filter(item => item !== name)].slice(0, 12);
+      localStorage.setItem('codexProjects', JSON.stringify(projects));
+      codexProjectHistory.innerHTML = projects.map(item => `<option value="${escapeHtml(item)}"></option>`).join('');
+    }
+
+    function openCodexProject() {
+      codexPreviousFocus = document.activeElement;
+      const projects = savedCodexProjects();
+      codexProjectHistory.innerHTML = projects.map(item => `<option value="${escapeHtml(item)}"></option>`).join('');
+      if (!codexProjectName.value && projects[0]) codexProjectName.value = projects[0];
+      codexModal.classList.add('visible');
+      codexModal.setAttribute('aria-hidden', 'false');
+      setTimeout(() => codexProjectName.focus(), 0);
+    }
+
+    function closeCodexProject() {
+      codexModal.classList.remove('visible');
+      codexModal.setAttribute('aria-hidden', 'true');
+      if (codexPreviousFocus) codexPreviousFocus.focus();
+    }
+
+    codexModel.addEventListener('change', () => {
+      codexCustomModel.hidden = codexModel.value !== 'custom';
+      if (codexCustomModel.hidden) codexCustomModel.value = '';
+      else codexCustomModel.focus();
+    });
+
+    function codexProjectPayload() {
+      const projectName = codexProjectName.value.trim().toLowerCase().replace(/_/g, '-');
+      const model = codexModel.value === 'custom' ? codexCustomModel.value.trim() : codexModel.value;
+      return { projectName, model, brief: codexBrief.value.trim() };
+    }
+
+    function askThursdayToPlanCodexProject() {
+      if (!codexProjectForm.reportValidity()) return;
+      const payload = codexProjectPayload();
+      closeCodexProject();
+      userInput.value = `I want to plan a Codex project named ${payload.projectName}. Model preference: ${payload.model || 'Codex default'}. Brief: ${payload.brief}\n\nAsk me concise questions only for material missing product, stack, or design decisions. Do not launch Codex yet.`;
+      chatForm.requestSubmit();
+    }
+
+    codexProjectForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (!codexProjectForm.reportValidity()) return;
+      const payload = codexProjectPayload();
+      rememberCodexProject(payload.projectName);
+      closeCodexProject();
+      userInput.value = '[codex-launch]\n' + JSON.stringify({
+        project_name: payload.projectName,
+        model: payload.model,
+        brief: payload.brief,
+      });
+      chatForm.requestSubmit();
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && codexModal.classList.contains('visible')) closeCodexProject();
     });
 
     function removeThinkingBubble() {
@@ -1083,6 +1217,10 @@
             <div class="tool-section-label">Request</div>
             <pre class="tool-request-pre"></pre>
           </div>
+          <div class="tool-section terminal" style="display:none;">
+            <div class="tool-section-label">Codex Terminal</div>
+            <pre class="tool-terminal-pre"></pre>
+          </div>
           <div class="tool-section result" style="display:none;">
             <div class="tool-section-label">Result</div>
             <pre class="tool-result-pre"></pre>
@@ -1100,9 +1238,18 @@
       if (!card) {
         card = createToolCard(toolName);
       }
-      card.dataset.rawArgs += chunk;
-      const pre = card.querySelector('.tool-request-pre');
-      if (pre) pre.textContent = card.dataset.rawArgs;
+      if (toolName === 'codex_orchestrate') {
+        const terminal = card.querySelector('.tool-section.terminal');
+        const pre = card.querySelector('.tool-terminal-pre');
+        if (terminal && pre) {
+          terminal.style.display = '';
+          pre.textContent += chunk;
+        }
+      } else {
+        card.dataset.rawArgs += chunk;
+        const pre = card.querySelector('.tool-request-pre');
+        if (pre) pre.textContent = card.dataset.rawArgs;
+      }
       chatHistory.scrollTop = chatHistory.scrollHeight;
     }
 
@@ -1208,7 +1355,6 @@
     let analyserNode = null;
     let audioQueue = [];
     let isPlayingAudio = false;
-    let voiceAnimId = null;
     let markInstance = null;
 
     function initAudio() {

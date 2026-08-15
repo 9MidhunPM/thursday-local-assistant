@@ -27,6 +27,7 @@ const TOOL_ICONS: Record<string, string> = {
   voice: '🎙️',
   apps: '🖥️',
   system: '⚙️',
+  codex: '🧑‍💻',
 }
 
 function iconFor(tool: string): string {
