@@ -1,0 +1,6 @@
+# Codex workspaces are user-generated and may contain private project material.
+*
+!.gitignore
+!README.md
+!todo-app/
+!todo-app/**

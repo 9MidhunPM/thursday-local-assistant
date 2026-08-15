@@ -7,6 +7,7 @@ import LogsModal from '@/components/LogsModal'
 import VoiceVisualizer from '@/components/VoiceVisualizer'
 import Sidebar from '@/components/Sidebar'
 import ConfirmBanner, { type ConfirmRequest } from '@/components/ConfirmBanner'
+import CodexProjectModal from '@/components/CodexProjectModal'
 import { useAudioEngine } from '@/hooks/useAudioEngine'
 import { useEventStream } from '@/hooks/useEventStream'
 import { useConversations } from '@/hooks/useConversations'
@@ -19,6 +20,7 @@ const TTS_STORAGE_KEY = 'ttsEnabled'
 export default function App() {
   const [state, dispatch] = useReducer(chatReducer, initialState)
   const [showLogs, setShowLogs] = useState(false)
+  const [showCodexProject, setShowCodexProject] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null)
   const [ttsEnabled, setTtsEnabled] = useState<boolean>(() => {
@@ -133,6 +135,7 @@ export default function App() {
         onToggleTts={handleToggleTts}
         onClear={handleClear}
         onToggleLogs={() => setShowLogs((v) => !v)}
+        onOpenCodexProject={() => setShowCodexProject(true)}
         onToggleSidebar={() => setSidebarOpen((v) => !v)}
         health={health}
         conversationCount={conversations.conversations.length}
@@ -163,6 +166,11 @@ export default function App() {
         onDelete={conversations.remove}
       />
       <LogsModal visible={showLogs} logs={state.logs} onClose={() => setShowLogs(false)} />
+      <CodexProjectModal
+        visible={showCodexProject}
+        onClose={() => setShowCodexProject(false)}
+        onSend={handleSend}
+      />
       <ConfirmBanner request={confirmReq} onResolved={() => setConfirmReq(null)} />
     </MotionConfig>
   )

@@ -16,6 +16,9 @@ eggs/
 .eggs/
 lib/
 lib64/
+# The React client keeps source helpers in this intentionally named directory.
+!assistant/web/src/lib/
+!assistant/web/src/lib/**
 parts/
 sdist/
 var/
@@ -88,6 +91,8 @@ mysql/
 node_modules/
 # Keep assistant/web/dist committed so clones work without Node.
 # Rebuild with: cd assistant/web && npm run build
+!assistant/web/dist/
+!assistant/web/dist/**
 *.tsbuildinfo
 
 # Thursday runtime data (logs, memory db)

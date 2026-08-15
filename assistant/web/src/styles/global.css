@@ -194,6 +194,157 @@ body {
   border-color: var(--panel-border-strong);
   background: rgba(255,255,255,0.03);
 }
+.codex-project-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-1);
+  border-color: rgba(177, 189, 149, 0.24);
+}
+
+/* === Codex project studio === */
+.codex-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(4, 5, 3, 0.78);
+  backdrop-filter: blur(14px) saturate(0.8);
+  animation: fadeIn 0.18s var(--ease-smooth);
+}
+.codex-modal-card {
+  position: relative;
+  width: min(620px, 100%);
+  max-height: min(780px, calc(100vh - 40px));
+  overflow-y: auto;
+  padding: 26px;
+  border: 1px solid var(--panel-border-strong);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(circle at 85% -10%, rgba(177, 189, 149, 0.13), transparent 40%),
+    rgba(18, 20, 14, 0.97);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.62);
+  animation: confirmIn 0.24s var(--ease-snap);
+}
+.codex-close {
+  position: absolute;
+  top: 18px;
+  right: 20px;
+}
+.codex-kicker {
+  margin-bottom: 8px;
+  color: var(--accent-1);
+  font: 600 10px/1 'Fira Code', monospace;
+  letter-spacing: 1.4px;
+}
+.codex-modal-card h2 {
+  margin: 0;
+  font-family: 'Outfit', sans-serif;
+  font-size: 26px;
+  letter-spacing: -0.4px;
+}
+.codex-intro {
+  max-width: 520px;
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.codex-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 22px;
+}
+.codex-field {
+  display: grid;
+  gap: 7px;
+}
+.codex-field > span {
+  color: #cbd3bd;
+  font-size: 12px;
+  font-weight: 600;
+}
+.codex-field input,
+.codex-field select,
+.codex-field textarea {
+  width: 100%;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-main);
+  padding: 11px 12px;
+  font: inherit;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.codex-field select option {
+  background: #171a12;
+  color: var(--text-main);
+}
+.codex-field textarea {
+  min-height: 132px;
+  resize: vertical;
+  line-height: 1.5;
+}
+.codex-field input:focus-visible,
+.codex-field select:focus-visible,
+.codex-field textarea:focus-visible,
+.codex-action:focus-visible {
+  outline: none;
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px rgba(177, 189, 149, 0.12);
+}
+.codex-note {
+  padding: 10px 12px;
+  border: 1px solid rgba(177, 189, 149, 0.10);
+  border-radius: var(--radius-sm);
+  background: rgba(177, 189, 149, 0.035);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.codex-note code {
+  color: var(--text-muted);
+  font-family: 'Fira Code', monospace;
+}
+.codex-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+.codex-action {
+  border: 1px solid var(--panel-border-strong);
+  border-radius: var(--radius-pill);
+  padding: 9px 15px;
+  color: var(--text-main);
+  background: transparent;
+  cursor: pointer;
+  font: 600 12px/1.2 inherit;
+  transition: all 0.16s var(--ease-smooth);
+}
+.codex-action:hover {
+  border-color: rgba(177, 189, 149, 0.35);
+  background: rgba(255, 255, 255, 0.04);
+}
+.codex-action.primary {
+  border: none;
+  background: var(--accent-gradient);
+  color: #0b0d0a;
+}
+.codex-action.primary:hover {
+  filter: brightness(1.06);
+}
+
+@media (max-width: 760px) {
+  .codex-project-btn span { display: none; }
+  .codex-modal-card { padding: 22px 18px; }
+  .codex-actions { flex-direction: column-reverse; }
+  .codex-action { width: 100%; }
+}
 
 /* === Header === */
 header {

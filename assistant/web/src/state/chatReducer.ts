@@ -5,7 +5,7 @@ import type {
   HistoryMessage,
   ToolResultData,
 } from '@/types'
-import { formatToolArgs, parseToolResult, uid } from '@/lib/utils'
+import { formatToolArgs, formatUserMessage, parseToolResult, uid } from '@/lib/utils'
 
 const WELCOME = 'Welcome back. I am Thursday, your local personal assistant. How can I help you today?'
 
@@ -58,7 +58,7 @@ function rebuildFromHistory(history: HistoryMessage[]): ChatItem[] {
   const items: ChatItem[] = []
   for (const msg of history) {
     if (msg.role === 'user') {
-      if (msg.content) items.push({ id: uid(), kind: 'user', content: msg.content })
+      if (msg.content) items.push({ id: uid(), kind: 'user', content: formatUserMessage(msg.content) })
     } else if (msg.role === 'assistant') {
       if (msg.content) {
         items.push({ id: uid(), kind: 'agent', content: msg.content })
@@ -140,13 +140,14 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, status: action.status }
 
     case 'APPEND_USER_MESSAGE': {
+      const content = formatUserMessage(action.content)
       const lastUser = [...state.items].reverse().find((i) => i.kind === 'user')
-      if (lastUser && lastUser.kind === 'user' && lastUser.content.includes(action.content)) {
+      if (lastUser && lastUser.kind === 'user' && lastUser.content.includes(content)) {
         return state
       }
       return {
         ...state,
-        items: [...state.items, { id: uid(), kind: 'user', content: action.content }],
+        items: [...state.items, { id: uid(), kind: 'user', content }],
       }
     }
 
