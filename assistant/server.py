@@ -81,6 +81,11 @@ class EventBroadcaster:
         pass
 
     def broadcast(self, event_type: str, data: Any) -> None:
+        if isinstance(data, dict) and event_type in {"token", "tool_call", "tool_chunk", "tool_result", "final_response", "user_message", "error", "confirm_required", "status"}:
+            tasks = getattr(getattr(server_runtime, "agent", None), "tasks", None)
+            run = tasks.active if tasks else None
+            if run:
+                data = {**data, "task_id": run.data["id"], "conversation_id": run.data["conversation_id"]}
         event = {"type": event_type, "data": data, "timestamp": time.time()}
         with self.lock:
             has_web = any(c["type"] == "web" for c in self.clients)
@@ -104,7 +109,8 @@ class EventBroadcaster:
         """Gracefully close all SSE client connections."""
         with self.lock:
             self._shutting_down = True
-            for q in self.clients:
+            for client in self.clients:
+                q = client["queue"]
                 try:
                     q.put_nowait({"type": "shutdown", "data": {"reason": "server_shutdown"}, "timestamp": time.time()})
                 except queue.Full:
@@ -120,7 +126,8 @@ class EventBroadcaster:
     def remove_all_clients(self) -> None:
         """Remove all clients and clear the client list."""
         with self.lock:
-            for q in self.clients:
+            for client in self.clients:
+                q = client["queue"]
                 try:
                     q.put_nowait({"type": "shutdown", "data": {"reason": "server_shutdown"}, "timestamp": time.time()})
                 except queue.Full:
@@ -231,6 +238,15 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         remote = self.client_address[0] if self.client_address else ""
         return remote in {"127.0.0.1", "::1", "localhost"}
 
+    def _require_local_origin(self) -> bool:
+        """A hostile website must not read captures or drive a local task."""
+        from urllib.parse import urlparse
+        origin = self.headers.get("Origin")
+        if origin and urlparse(origin).netloc != self.headers.get("Host"):
+            self._send_json(403, {"error": "Cross-origin desktop access is disabled"})
+            return False
+        return True
+
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -248,6 +264,48 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         from urllib.parse import parse_qs, urlparse
         parsed = urlparse(self.path)
         parsed_path = parsed.path
+        if parsed_path.startswith("/api/"):
+            token = (parse_qs(parsed.query).get("token") or [None])[0]
+            if not self._require_auth(query_token=token):
+                return
+            if parsed_path == "/api/events" and not self._require_local_origin():
+                return
+        if parsed_path.startswith(("/api/tasks", "/api/captures/", "/api/memory")):
+            if not self._require_local_origin():
+                return
+            token = (parse_qs(parsed.query).get("token") or [None])[0]
+            if not self._require_auth(query_token=token):
+                return
+            if not server_runtime:
+                self._send_json(503, {"error": "Runtime unavailable"})
+                return
+            if parsed_path.startswith("/api/captures/"):
+                from assistant.integrations.hypruse import captures
+                capture = captures.get(parsed_path.rsplit("/", 1)[-1])
+                if not capture:
+                    self.send_error(404, "Capture expired")
+                    return
+                content, mime = capture
+                self.send_response(200)
+                self.send_header("Content-Type", mime)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+                return
+            if parsed_path == "/api/memory":
+                self._send_json(200, {"items": server_runtime.agent._memory.list_assertions()})
+                return
+            tasks = server_runtime.agent.tasks
+            requested = (parse_qs(parsed.query).get("conversation_id") or [None])[0]
+            try:
+                cid = int(requested) if requested else active_conversation_id
+            except ValueError:
+                self._send_json(400, {"error": "Invalid conversation id"})
+                return
+            task = tasks.latest(cid) if parsed_path == "/api/tasks" else tasks.get(parsed_path.rsplit("/", 1)[-1])
+            self._send_json(200 if task or parsed_path == "/api/tasks" else 404, {"task": task})
+            return
         if parsed_path == "/" or parsed_path == "/index.html":
             self._serve_index()
             return
@@ -339,7 +397,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 history_data = _history_for_active_conversation()
 
                 self.wfile.write(
-                    f"data: {json.dumps({'type': 'init', 'data': {'busy': is_busy, 'model_ready': is_model_ready, 'logs': model_log_buffer, 'history': history_data, 'conversation_id': active_conversation_id}})}\n\n".encode()
+                    f"data: {json.dumps({'type': 'init', 'data': {'busy': is_busy, 'model_ready': is_model_ready, 'logs': model_log_buffer, 'history': history_data, 'conversation_id': active_conversation_id, 'task': server_runtime.agent.tasks.latest(active_conversation_id) if server_runtime and server_runtime.agent.tasks else None}})}\n\n".encode()
                 )
                 self.wfile.flush()
 
@@ -600,6 +658,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self._send_json(200, {"id": cid, "title": title.strip()[:100]})
 
     def do_DELETE(self) -> None:
+        global active_conversation_id
         from urllib.parse import parse_qs, urlparse
         parsed = urlparse(self.path)
         parsed_path = parsed.path
@@ -616,11 +675,13 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             except ValueError:
                 self.send_error(400, "Invalid conversation id")
                 return
+            if is_busy and active_conversation_id == cid:
+                self._send_json(409, {"error": "Stop the active task before deleting its conversation"})
+                return
             ok = server_runtime.conversation_store.delete_conversation(cid)
             if not ok:
                 self.send_error(404, "Conversation not found")
                 return
-            global active_conversation_id
             if active_conversation_id == cid:
                 active_conversation_id = None
             broadcaster.broadcast("conversation_deleted", {"id": cid})
@@ -642,11 +703,14 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self.send_error(404, "Not Found")
 
     def do_POST(self) -> None:
+        global is_busy
         from urllib.parse import parse_qs, urlparse
         parsed = urlparse(self.path)
         parsed_path = parsed.path
         query = parse_qs(parsed.query)
         q_token = (query.get("token") or [None])[0]
+        if parsed_path.startswith(("/api/tasks/", "/api/memory/", "/api/message", "/api/confirm")) and not self._require_local_origin():
+            return
 
         if parsed_path == "/api/browser-bridge/v2/result":
             if not self._is_loopback_request():
@@ -693,6 +757,65 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(200 if ok else 404, {"ok": ok, "id": confirm_id, "approved": approved})
             return
 
+        if parsed_path.startswith("/api/tasks/"):
+            if not server_runtime:
+                self._send_json(503, {"error": "Runtime unavailable"})
+                return
+            parts = parsed_path.strip("/").split("/")
+            if len(parts) != 4 or parts[3] not in {"cancel", "resume"}:
+                self._send_json(404, {"error": "Unknown task action"})
+                return
+            task_id, action = parts[2:]
+            tasks = server_runtime.agent.tasks
+            previous = tasks.get(task_id)
+            if previous is None:
+                self._send_json(404, {"error": "Task not found"})
+                return
+            if action == "cancel":
+                ok = tasks.cancel(task_id)
+                if ok:
+                    if server_runtime.tts:
+                        server_runtime.tts.stop()
+                    # Releasing the owned stdio process invokes Hypruse's pointer cleanup.
+                    if server_runtime.agent.hypruse:
+                        server_runtime.agent.hypruse.close()
+                self._send_json(200 if ok else 409, {"ok": ok})
+                return
+            with busy_lock:
+                if is_busy or previous["status"] not in {"paused", "interrupted", "cancelled", "failed"}:
+                    self._send_json(409, {"error": "Task cannot resume while running or after completion"})
+                    return
+                cid = previous["conversation_id"]
+                if cid is None or not server_runtime.conversation_store.get_conversation(cid):
+                    self._send_json(404, {"error": "Original conversation no longer exists"})
+                    return
+                _activate_conversation(cid)
+                tasks.on_update = lambda current: broadcaster.broadcast("task_updated", current)
+                task = tasks.create(previous["goal"], cid, server_runtime.config.agent.task_timeout_sec, parent=task_id)
+                task.web = True
+                task.data["outcomes"] = previous["outcomes"]
+                task.publish()
+                is_busy = True
+            prompt = "Resume this task: " + previous["goal"]
+            self._send_json(200, {"task_id": task.data["id"], "conversation_id": cid})
+            threading.Thread(target=self.run_agent, args=(prompt, False, cid, task), daemon=True).start()
+            return
+
+        if parsed_path.startswith("/api/memory/"):
+            try:
+                if not server_runtime or len(parsed_path.strip("/").split("/")) != 3:
+                    raise ValueError("Invalid memory endpoint")
+                data = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+                assertion_id = int(parsed_path.split("/")[3])
+                value = data.get("value")
+                if value is not None and (not isinstance(value, str) or not value.strip() or len(value) > 500):
+                    raise ValueError("Invalid correction")
+                ok = server_runtime.agent._memory.modify_assertion(assertion_id, value)
+                self._send_json(200 if ok else 404, {"ok": ok})
+            except (ValueError, TypeError, IndexError):
+                self._send_json(400, {"error": "Invalid memory correction"})
+            return
+
         if parsed_path == "/api/message":
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length)
@@ -713,23 +836,28 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(b"Prompt cannot be empty")
                 return
 
-            # Activate the requested conversation (or create one), so the agent's
-            # working memory and persistence target the right session.
-            try:
-                if conversation_id is not None and server_runtime:
-                    _activate_conversation(int(conversation_id))
-                else:
-                    cid = _ensure_active_conversation()
-                    conversation_id = cid
-            except Exception:
-                conversation_id = active_conversation_id
-
-            global is_busy
             with busy_lock:
                 if is_busy:
-                    self.send_response(409)
-                    self.end_headers()
-                    self.wfile.write(b"Agent is busy")
+                    self._send_json(409, {"error": "Agent is busy"})
+                    return
+                if not server_runtime:
+                    self._send_json(503, {"error": "Runtime unavailable"})
+                    return
+                try:
+                    if conversation_id is not None:
+                        conversation_id = int(conversation_id)
+                        if not server_runtime.conversation_store.get_conversation(conversation_id):
+                            self._send_json(404, {"error": "Conversation does not exist"})
+                            return
+                        _activate_conversation(conversation_id)
+                    else:
+                        conversation_id = _ensure_active_conversation()
+                    server_runtime.agent.tasks.on_update = lambda task: broadcaster.broadcast("task_updated", task)
+                    task = server_runtime.agent.tasks.create(prompt, conversation_id,
+                        server_runtime.config.agent.task_timeout_sec)
+                    task.web = True
+                except (ValueError, TypeError, RuntimeError):
+                    self._send_json(400, {"error": "Invalid task or conversation"})
                     return
                 is_busy = True
 
@@ -738,7 +866,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(
                 json.dumps(
-                    {"status": "processing", "conversation_id": conversation_id}
+                    {"status": "processing", "conversation_id": conversation_id, "task_id": task.data["id"]}
                 ).encode()
             )
 
@@ -754,7 +882,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             # Start agent reasoning in a separate thread
             threading.Thread(
                 target=self.run_agent,
-                args=(prompt, use_tts, conversation_id),
+                args=(prompt, use_tts, conversation_id, task),
                 daemon=True,
             ).start()
             return
@@ -803,7 +931,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
         self.send_error(404, "Not Found")
 
-    def run_agent(self, prompt: str, use_tts: bool = False, conversation_id: int | None = None) -> None:
+    def run_agent(self, prompt: str, use_tts: bool = False, conversation_id: int | None = None, task=None) -> None:
         import re as _re
         import time
         global is_busy
@@ -940,6 +1068,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                     on_tool_call=on_tool_call,
                     on_tool_chunk=on_tool_chunk,
                     on_tool_result=on_tool_result,
+                    task=task,
                 )
                 
                 broadcaster.broadcast("final_response", {"content": final_response})
