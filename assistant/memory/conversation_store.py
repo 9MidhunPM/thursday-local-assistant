@@ -72,6 +72,10 @@ class ConversationStore:
                 "ON conversation_messages(conversation_id, seq)"
             )
 
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(conversation_messages)")}
+            if "response_items_json" not in columns:
+                conn.execute("ALTER TABLE conversation_messages ADD COLUMN response_items_json TEXT")
+
     # ---- conversations ----
 
     def create_conversation(self, title: str = "New Chat") -> int:
@@ -142,6 +146,7 @@ class ConversationStore:
         tool_name: str | None = None,
         tool_call_id: str | None = None,
         tool_calls: list[dict[str, Any]] | None = None,
+        response_items: list[dict[str, Any]] | None = None,
     ) -> int:
         ts = _now_iso()
         tool_calls_json = json.dumps(tool_calls, ensure_ascii=True) if tool_calls else None
@@ -155,10 +160,11 @@ class ConversationStore:
             cur = conn.execute(
                 """
                 INSERT INTO conversation_messages
-                    (conversation_id, role, content, tool_name, tool_call_id, tool_calls_json, seq, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (conversation_id, role, content, tool_name, tool_call_id, tool_calls_json, seq, created_at, response_items_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (conversation_id, role, content, tool_name, tool_call_id, tool_calls_json, seq, ts),
+                (conversation_id, role, content, tool_name, tool_call_id, tool_calls_json, seq, ts,
+                 json.dumps(response_items) if response_items else None),
             )
             conn.execute(
                 "UPDATE conversations SET updated_at = ? WHERE id = ?",
@@ -169,13 +175,15 @@ class ConversationStore:
     def get_messages(self, conversation_id: int) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT role, content, tool_name, tool_call_id, tool_calls_json "
+                "SELECT id, role, content, tool_name, tool_call_id, tool_calls_json, response_items_json "
                 "FROM conversation_messages WHERE conversation_id = ? ORDER BY seq ASC",
                 (conversation_id,),
             ).fetchall()
         messages: list[dict[str, Any]] = []
         for r in rows:
-            item: dict[str, Any] = {"role": r["role"], "content": r["content"]}
+            item: dict[str, Any] = {"id": r["id"], "role": r["role"], "content": r["content"]}
+            if r["response_items_json"]:
+                item["response_items"] = json.loads(r["response_items_json"])
             if r["tool_name"]:
                 item["tool_name"] = r["tool_name"]
             if r["tool_call_id"]:
