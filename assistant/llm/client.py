@@ -17,6 +17,7 @@ class ChatMessage:
     name: str | None = None
     tool_call_id: str | None = None
     tool_calls: list[ToolCall] | None = None
+    response_items: list[dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,8 @@ class InferenceStats:
     tokens_per_second: float | None = None
     total_time: float = 0.0
     backend: str = "openai-compatible"
+    cached_tokens: int = 0
+    reasoning_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -313,7 +316,7 @@ class OpenAICompatibleClient:
         reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         openai_reasoning_model = self._provider == "openai" and (
-            str(self._model).startswith("o") or str(self._model).startswith("gpt-5")
+            str(self._model).startswith(("o", "gpt-5", "gpt-6"))
         )
         payload: dict[str, Any] = {
             "model": self._model,
@@ -369,7 +372,7 @@ class OpenAICompatibleClient:
         # GPT-5.6 Luna supports Chat Completions function tools only with
         # reasoning disabled. Thursday keeps its own tool-execution loop, so
         # the Responses API is not required for this compatibility path.
-        if self._provider == "openai" and str(self._model).startswith("gpt-5"):
+        if self._provider == "openai" and str(self._model).startswith(("gpt-5", "gpt-6")):
             if tools:
                 payload["reasoning_effort"] = "none"
             elif reasoning_effort:
@@ -675,6 +678,8 @@ def build_llm_client(
     response_format: str | None,
     provider: str | None = None,
     api_key: str | None = None,
+    api_mode: str = "auto",
+    reasoning_effort: str = "low",
 ) -> OpenAICompatibleClient:
     """Factory: merge config + env and construct the right client."""
     settings = resolve_provider_settings(
@@ -693,7 +698,13 @@ def build_llm_client(
         if not (os.getenv("LLAMA_HOST") or os.getenv("LLAMA_PORT")):
             final_url = base_url.rstrip("/")
 
-    return OpenAICompatibleClient(
+    client_class = OpenAICompatibleClient
+    extra = {}
+    if api_mode == "responses" or (settings["provider"] == "openai" and api_mode == "auto"):
+        from assistant.llm.responses import ResponsesClient
+        client_class = ResponsesClient
+        extra = {"reasoning_effort": reasoning_effort}
+    return client_class(
         base_url=final_url,
         model=final_model,
         temperature=temperature,
@@ -702,4 +713,5 @@ def build_llm_client(
         response_format=response_format,
         api_key=settings["api_key"],
         provider=settings["provider"],
+        **extra,
     )
