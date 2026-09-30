@@ -100,6 +100,8 @@ class ModelConfig:
     provider: str = "local"
     api_key: str | None = None
     context_budget_tokens: int = 7000
+    api_mode: str = "auto"
+    reasoning_effort: str = "low"
 
 
 @dataclass(frozen=True)
@@ -154,6 +156,9 @@ class AgentConfig:
     user_name: str = "User"
     smart_tool_filter: bool = True
     web_confirm_timeout_sec: int = 60
+    task_timeout_sec: int = 300
+    recent_history_tokens: int = 8000
+    hypruse_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -292,6 +297,17 @@ def load_config(path: Path) -> AppConfig:
         tools.get("enabled_groups", [])
     )
 
+    api_mode = os.getenv("LLM_API_MODE") or model.get("api_mode", "auto")
+    reasoning_effort = os.getenv("LLM_REASONING_EFFORT") or model.get("reasoning_effort", "low")
+    task_timeout = int(os.getenv("THURSDAY_TASK_TIMEOUT") or agent_cfg.get("task_timeout_sec", 300))
+    recent_history = int(agent_cfg.get("recent_history_tokens", 8000))
+    if api_mode not in {"auto", "responses", "chat"}:
+        raise ValueError("LLM_API_MODE must be auto, responses, or chat")
+    if reasoning_effort not in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
+        raise ValueError("Unsupported reasoning effort")
+    if max_tool_steps < 1 or task_timeout < 1 or recent_history < 256 or context_budget < 1024:
+        raise ValueError("Task and context budgets must be positive and large enough for tool exchanges")
+
     return AppConfig(
         model=ModelConfig(
             base_url=base_url,
@@ -311,6 +327,8 @@ def load_config(path: Path) -> AppConfig:
             or os.getenv("MISTRAL_API_KEY")
             or model.get("api_key"),
             context_budget_tokens=context_budget,
+            api_mode=api_mode,
+            reasoning_effort=reasoning_effort,
         ),
         tools=ToolConfig(
             read_roots=read_roots,
@@ -344,6 +362,9 @@ def load_config(path: Path) -> AppConfig:
             stt_language=str(voice_cfg.get("stt_language", "en-US")),
         ),
         agent=AgentConfig(
+            task_timeout_sec=task_timeout,
+            recent_history_tokens=recent_history,
+            hypruse_enabled=bool(_env_bool("THURSDAY_HYPRUSE", agent_cfg.get("hypruse_enabled", False))),
             max_tool_steps=max_tool_steps,
             system_prompt=system_prompt,
             stream_responses=bool(agent_cfg.get("stream_responses", True)),
