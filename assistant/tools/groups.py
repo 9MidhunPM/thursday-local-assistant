@@ -141,7 +141,7 @@ KEYWORD_GROUPS: list[tuple[tuple[str, ...], frozenset[str]]] = [
         frozenset({"system"}),
     ),
     (
-        ("clipboard", "screenshot", "window", "brightness", "notify", "notification", "desktop"),
+        ("clipboard", "screenshot", "window", "brightness", "notify", "notification", "desktop", "screen", "click", "type", "workspace", "form", "arrange", "hypruse"),
         frozenset({"desktop"}),
     ),
     (
@@ -202,6 +202,8 @@ KEYWORD_GROUPS: list[tuple[tuple[str, ...], frozenset[str]]] = [
 
 
 def group_for(tool_name: str) -> str:
+    if tool_name.startswith("hypruse__"):
+        return "desktop"
     return TOOL_GROUPS.get(tool_name, "misc")
 
 
@@ -236,7 +238,10 @@ def filter_tools_payload(
         return tools_payload
 
     groups = select_groups_for_message(user_text, enabled_groups)
-    specialist_group = "calendar" if "calendar" in groups else None
+    # Keep pure calendar requests on their integration, while permitting explicit
+    # cross-domain work and capabilities obtained through discovery.
+    other_domains = groups - set(ALWAYS_ON_GROUPS) - {"misc", "calendar"}
+    specialist_group = "calendar" if smart and "calendar" in groups and not other_domains else None
     filtered: list[dict[str, object]] = []
     for tool in tools_payload:
         try:
