@@ -40,11 +40,11 @@ class ConfirmBroker:
             item.event.set()
             return True
 
-    def request(self, prompt: str, timeout_sec: float | None = None) -> bool:
+    def request(self, prompt: str, timeout_sec: float | None = None, cancel_event=None, force_web=False) -> bool:
         timeout = timeout_sec if timeout_sec is not None else self.default_timeout_sec
 
         # Interactive CLI
-        if sys.stdin.isatty():
+        if sys.stdin.isatty() and not force_web:
             try:
                 reply = input(f"{prompt} [y/N]: ").strip().lower()
                 return reply in {"y", "yes"}
@@ -63,7 +63,13 @@ class ConfirmBroker:
                 {"id": confirm_id, "prompt": prompt, "timeout_sec": timeout},
             )
 
-        approved = item.event.wait(timeout=timeout) and item.approved
+        import time
+        deadline = time.monotonic() + timeout
+        while not item.event.is_set() and time.monotonic() < deadline:
+            if cancel_event and cancel_event.is_set():
+                break
+            item.event.wait(min(0.1, max(0, deadline - time.monotonic())))
+        approved = item.event.is_set() and item.approved and not (cancel_event and cancel_event.is_set())
         with self._lock:
             self._pending.pop(confirm_id, None)
 
