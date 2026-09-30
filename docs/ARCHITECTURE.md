@@ -34,18 +34,21 @@ Python tools perform the work; the interface shows what happened.
 ## Request lifecycle
 
 1. The CLI, browser, or voice layer submits a user turn.
-2. The server activates a conversation and broadcasts lifecycle events over Server-Sent Events.
+2. The server checks the busy lock before activating a conversation, creates a durable task run,
+   and broadcasts task and conversation IDs over Server-Sent Events.
 3. The agent builds a bounded context from the current conversation, relevant memories, and the
    system contract.
-4. Keyword groups and follow-up routing reduce the tool catalog to the capabilities relevant to
-   this turn.
-5. The configured OpenAI-compatible model either answers or requests one or more tools.
+4. Keyword groups and follow-up routing reduce the initial catalog. `discover_tools` can add
+   capabilities for subsequent steps; explicit cross-domain calendar work retains other tools.
+5. OpenAI uses stateless Responses with encrypted reasoning-item replay; other providers retain
+   Chat Completions. Only complete, parsed, schema-valid calls reach the executor.
 6. Safety checks validate paths, shell policy, authentication, and confirmation requirements before
    a tool runs.
 7. Tool calls, chunks, results, errors, and confirmations are broadcast to the UI. The model can use
    those results for the next step, up to the configured tool-step budget.
-8. The final answer and conversation state are persisted locally. Automatic fact extraction can
-   separately update long-term memory.
+8. Each action outcome is checkpointed immediately. Cancellation and budgets stop further work,
+   and resuming creates a new run with the prior outcomes. Personal extraction runs in a bounded
+   queue, accepts only literal user evidence, and stores provenance separately from working context.
 
 ## Major components
 
@@ -69,6 +72,10 @@ Python tools perform the work; the interface shows what happened.
   streaming, and memory extraction.
 - Smart tool grouping reduces prompt size and tool-choice noise while retaining explicit follow-up
   behaviors such as “open the second one.”
+- Tool metadata controls concurrency: only explicitly safe reads run in parallel; mixed batches
+  and desktop operations run serially. Tasks expose step/time limits and detect repeated outcomes.
+- Context keeps complete tool exchanges, bounded user/tool excerpts, and recent task outcomes.
+  Images are supplied transiently on the next request and never placed in conversation history.
 
 ### Tools and integrations
 
@@ -80,6 +87,9 @@ Python tools perform the work; the interface shows what happened.
   utilities.
 - The managed Brave Helper communicates through a loopback bridge and the user's normal signed-in
   browser profile. Gmail drafting never presses Send; Calendar writes require confirmation.
+- `assistant/integrations/hypruse.py` owns a lazy stdio MCP child. Live schemas are registered under
+  `hypruse__`; strict seat and authentication guards remain enabled. Images are passed directly to
+  the model, with short-lived in-memory preview IDs and retained geometry/scale metadata.
 
 ### Memory
 
@@ -87,6 +97,9 @@ Python tools perform the work; the interface shows what happened.
   local SQLite database under `assistant/database`.
 - Memory has explicit read, list, delete, entity-delete, and full-forget operations.
 - The database is runtime state and is excluded from Git.
+- Additive `task_runs`, `memory_assertions`, and `response_items_json` storage preserves existing
+  conversations. The review UI labels legacy values with unavailable provenance; corrections keep
+  a supersession chain, and forgetting invalidates queued extraction.
 
 ### Codex orchestration
 
