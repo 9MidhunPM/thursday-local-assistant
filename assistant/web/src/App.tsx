@@ -1,4 +1,4 @@
-import { useCallback, useReducer, useState } from 'react'
+import { useCallback, useEffect, useReducer, useState } from 'react'
 import { MotionConfig } from 'framer-motion'
 import Header from '@/components/Header'
 import ChatHistory from '@/components/ChatHistory'
@@ -13,12 +13,16 @@ import { useEventStream } from '@/hooks/useEventStream'
 import { useConversations } from '@/hooks/useConversations'
 import { useHealth } from '@/hooks/useHealth'
 import { chatReducer, initialState } from '@/state/chatReducer'
-import type { HistoryMessage } from '@/types'
+import TaskPanel from '@/components/TaskPanel'
+import MemoryReview from '@/components/MemoryReview'
+import type { HistoryMessage, TaskState } from '@/types'
 
 const TTS_STORAGE_KEY = 'ttsEnabled'
 
 export default function App() {
   const [state, dispatch] = useReducer(chatReducer, initialState)
+  const [task, setTask] = useState<TaskState | null>(null)
+  const [showMemory, setShowMemory] = useState(false)
   const [showLogs, setShowLogs] = useState(false)
   const [showCodexProject, setShowCodexProject] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -36,6 +40,7 @@ export default function App() {
 
   const handleLoadConversation = useCallback(
     (_id: number, messages: HistoryMessage[]) => {
+      setTask(null)
       dispatch({ type: 'LOAD_CONVERSATION', history: messages })
     },
     [],
@@ -43,7 +48,17 @@ export default function App() {
 
   const conversations = useConversations(handleLoadConversation)
 
+  useEffect(() => {
+    let current = true
+    void fetch(`/api/tasks?conversation_id=${conversations.activeId ?? ''}`)
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => { if (current) setTask(data?.task ?? null) })
+      .catch(() => { if (current) setTask(null) })
+    return () => { current = false }
+  }, [conversations.activeId])
+
   useEventStream({
+    onTaskUpdate: (next) => { if (!next || next.conversation_id === conversations.activeId) setTask(next) },
     dispatch,
     onTtsPreparing: () => audio.prepareAudio(),
     onTtsAudio: (url, text) => audio.queueAudio(url, text),
@@ -142,6 +157,7 @@ export default function App() {
       />
       <div className="app-container">
         <div className="chat-panel">
+          <TaskPanel task={task} busy={busy} onMemory={() => setShowMemory(true)} onTask={setTask} />
           <ChatHistory
             items={state.items}
             registerAgentContent={audio.registerAgentContent}
@@ -165,6 +181,7 @@ export default function App() {
         onRename={conversations.rename}
         onDelete={conversations.remove}
       />
+      <MemoryReview visible={showMemory} onClose={() => setShowMemory(false)} />
       <LogsModal visible={showLogs} logs={state.logs} onClose={() => setShowLogs(false)} />
       <CodexProjectModal
         visible={showCodexProject}
