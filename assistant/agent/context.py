@@ -18,3 +18,4 @@ class ExecutionContext:
     analyze_images: Callable[[str, list[Path]], str] | None = None
     summarize_private_text: Callable[[str], str] | None = None
     report_progress: Callable[[str], None] | None = None
+    task: object | None = None
