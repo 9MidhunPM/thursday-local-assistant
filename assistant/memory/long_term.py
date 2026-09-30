@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 import re
 import time
+import threading
+from functools import wraps
 from typing import Iterable
 
 
@@ -69,6 +71,15 @@ def _recency_boost(last_accessed_at: str | None) -> float:
     return max(0.0, 0.5 ** (age_days / 14.0))
 
 
+def _invalidates_extraction(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._assertion_lock:
+            self.revision += 1
+            return method(self, *args, **kwargs)
+    return wrapped
+
+
 class LongTermMemory:
     """Personal long-term memory store.
 
@@ -81,6 +92,8 @@ class LongTermMemory:
         self._db_path = db_path
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._has_fts = False
+        self._assertion_lock = threading.RLock()
+        self.revision = 0
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -90,6 +103,11 @@ class LongTermMemory:
 
     def _init_db(self) -> None:
         with self._connect() as conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS memory_assertions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, payload TEXT NOT NULL,
+                evidence TEXT NOT NULL, conversation_id INTEGER, message_id INTEGER,
+                created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'current')""")
+            self._ensure_column(conn, "memory_assertions", "supersedes_id", "INTEGER")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS preferences (
@@ -156,6 +174,88 @@ class LongTermMemory:
             except sqlite3.OperationalError:
                 self._has_fts = False
 
+    def record_assertion(self, kind, payload, evidence, conversation_id, message_id, timestamp,
+                         expected_revision=None):
+        with self._assertion_lock:
+            if expected_revision is not None and expected_revision != self.revision:
+                return None
+            return self._record_assertion(kind, payload, evidence, conversation_id, message_id, timestamp)
+
+    def _record_assertion(self, kind, payload, evidence, conversation_id, message_id, timestamp):
+        import json
+        if kind not in {"preferences", "facts", "memories"}:
+            raise ValueError("Unsupported memory kind")
+        with self._connect() as conn:
+            rows = conn.execute("SELECT id,payload FROM memory_assertions WHERE kind=? AND status='current'", (kind,)).fetchall()
+            for row in rows:
+                previous = json.loads(row["payload"])
+                if previous == payload:
+                    return row["id"]
+                if kind == "preferences" and previous["key"] == payload["key"]:
+                    conn.execute("UPDATE memory_assertions SET status='superseded' WHERE id=?", (row["id"],))
+            cursor = conn.execute("INSERT INTO memory_assertions(kind,payload,evidence,conversation_id,message_id,created_at) VALUES (?,?,?,?,?,?)",
+                                 (kind, json.dumps(payload), evidence, conversation_id, message_id, timestamp))
+            assertion_id = cursor.lastrowid
+        if kind == "preferences":
+            self.set_preference(payload["key"], payload["value"], timestamp)
+        elif kind == "facts":
+            self.remember_fact(payload["subject"], payload["predicate"], payload["object"], timestamp)
+        else:
+            self.store_memory(payload["name"], payload["content"], timestamp)
+        return assertion_id
+
+    def list_assertions(self):
+        import json
+        with self._assertion_lock, self._connect() as conn:
+            # Existing canonical values remain available; never invent provenance.
+            current = {(row["kind"], row["payload"]) for row in conn.execute(
+                "SELECT kind,payload FROM memory_assertions WHERE status='current'")}
+            legacy = [("preferences", {"key": item.key, "value": item.value}) for item in self.list_preferences()]
+            legacy += [("facts", {"subject": item.subject, "predicate": item.predicate, "object": item.object}) for item in self.list_facts()]
+            legacy += [("memories", {"name": item.name, "content": item.content}) for item in self.list_memories()]
+            for kind, payload in legacy:
+                encoded = json.dumps(payload)
+                if (kind, encoded) not in current:
+                    conn.execute("INSERT INTO memory_assertions(kind,payload,evidence,created_at) VALUES (?,?,?,?)",
+                                 (kind, encoded, "Existing memory; original source unavailable",
+                                  datetime.now(timezone.utc).isoformat()))
+            rows = conn.execute("SELECT * FROM memory_assertions ORDER BY id DESC LIMIT 200").fetchall()
+        return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
+
+    @_invalidates_extraction
+    def modify_assertion(self, assertion_id, value=None):
+        import json
+        from datetime import datetime, timezone
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM memory_assertions WHERE id=? AND status='current'", (assertion_id,)).fetchone()
+            if row is None:
+                return False
+            payload = json.loads(row["payload"])
+            conn.execute("UPDATE memory_assertions SET status=? WHERE id=?", ("superseded" if value is not None else "deleted", assertion_id))
+        if row["kind"] == "preferences":
+            self.delete_preference(payload["key"], purge_assertions=value is None)
+        elif row["kind"] == "facts":
+            self.delete_fact(payload["subject"], payload["predicate"], payload["object"], purge_assertions=value is None)
+        else:
+            self.delete_memory(payload["name"], purge_assertions=value is None)
+        if value is not None:
+            field = {"preferences": "value", "facts": "object", "memories": "content"}[row["kind"]]
+            payload[field] = value
+            new_id = self.record_assertion(row["kind"], payload, "Explicit correction in memory review", None, None,
+                                           datetime.now(timezone.utc).isoformat())
+            with self._connect() as conn:
+                conn.execute("UPDATE memory_assertions SET supersedes_id=? WHERE id=?", (assertion_id, new_id))
+        else:
+            # Forget the correction's ancestors as well, while preserving other
+            # facts sharing the same predicate (e.g. two different interests).
+            with self._connect() as conn:
+                parent = row["supersedes_id"]
+                while parent is not None:
+                    ancestor = conn.execute("SELECT supersedes_id FROM memory_assertions WHERE id=?", (parent,)).fetchone()
+                    conn.execute("DELETE FROM memory_assertions WHERE id=?", (parent,))
+                    parent = ancestor[0] if ancestor else None
+        return True
+
     @staticmethod
     def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
         cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -191,8 +291,11 @@ class LongTermMemory:
             return None
         return Preference(key=row["key"], value=row["value"])
 
-    def delete_preference(self, key: str) -> bool:
+    @_invalidates_extraction
+    def delete_preference(self, key: str, purge_assertions=True) -> bool:
         with self._connect() as conn:
+            if purge_assertions:
+                conn.execute("DELETE FROM memory_assertions WHERE kind='preferences' AND json_extract(payload,'$.key')=?", (key,))
             cursor = conn.execute("DELETE FROM preferences WHERE key = ?", (key,))
             return cursor.rowcount > 0
 
@@ -270,8 +373,11 @@ class LongTermMemory:
             last_accessed_at=row["last_accessed_at"],
         )
 
-    def delete_memory(self, name: str) -> bool:
+    @_invalidates_extraction
+    def delete_memory(self, name: str, purge_assertions=True) -> bool:
         with self._connect() as conn:
+            if purge_assertions:
+                conn.execute("DELETE FROM memory_assertions WHERE kind='memories' AND json_extract(payload,'$.name')=?", (name,))
             cursor = conn.execute("DELETE FROM named_memories WHERE name = ?", (name,))
             return cursor.rowcount > 0
 
@@ -386,8 +492,23 @@ class LongTermMemory:
             for row in rows
         ]
 
-    def delete_fact(self, subject: str, predicate: str, object_value: str) -> bool:
+    @_invalidates_extraction
+    def delete_fact(self, subject: str, predicate: str, object_value: str, purge_assertions=True) -> bool:
         with self._connect() as conn:
+            if purge_assertions:
+                conn.execute("""
+                    WITH RECURSIVE forgotten(id) AS (
+                        SELECT id FROM memory_assertions
+                        WHERE kind='facts'
+                        AND lower(json_extract(payload,'$.subject'))=lower(?)
+                        AND lower(json_extract(payload,'$.predicate'))=lower(?)
+                        AND lower(json_extract(payload,'$.object'))=lower(?)
+                        UNION
+                        SELECT a.supersedes_id FROM memory_assertions a
+                        JOIN forgotten f ON a.id=f.id WHERE a.supersedes_id IS NOT NULL
+                    )
+                    DELETE FROM memory_assertions WHERE id IN (SELECT id FROM forgotten)
+                """, (subject, predicate, object_value))
             cursor = conn.execute(
                 "DELETE FROM knowledge_facts WHERE lower(subject) = lower(?) "
                 "AND lower(predicate) = lower(?) AND lower(object) = lower(?)",
@@ -395,15 +516,19 @@ class LongTermMemory:
             )
             return cursor.rowcount > 0
 
+    @_invalidates_extraction
     def delete_entity_facts(self, subject: str) -> int:
         with self._connect() as conn:
+            conn.execute("DELETE FROM memory_assertions WHERE kind='facts' AND lower(json_extract(payload,'$.subject'))=lower(?)", (subject,))
             cursor = conn.execute(
                 "DELETE FROM knowledge_facts WHERE lower(subject) = lower(?)", (subject,)
             )
             return cursor.rowcount
 
+    @_invalidates_extraction
     def forget_everything(self) -> dict[str, int]:
         with self._connect() as conn:
+            conn.execute("DELETE FROM memory_assertions")
             prefs = conn.execute("DELETE FROM preferences").rowcount
             memories = conn.execute("DELETE FROM named_memories").rowcount
             facts = conn.execute("DELETE FROM knowledge_facts").rowcount
