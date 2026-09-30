@@ -57,7 +57,20 @@ export interface ChatState {
 
 /* ===== SSE event payload shapes (mirror assistant/server.py) ===== */
 
+export interface TaskState {
+  id: string
+  conversation_id: number | null
+  goal: string
+  status: string
+  step: number
+  detail: string
+  preview?: string
+  outcomes: { tool?: string; success?: boolean; verification?: string }[]
+  usage: { prompt_tokens?: number; completion_tokens?: number; estimated_usd?: number }
+}
+
 export interface InitData {
+  task?: TaskState | null
   busy: boolean
   model_ready: boolean
   logs: string[]
@@ -88,6 +101,7 @@ export interface ConfirmRequiredData {
 }
 
 export type AgentEvent =
+  | { type: 'task_updated'; data: TaskState }
   | { type: 'init'; data: InitData }
   | { type: 'model_ready'; data: Record<string, never> }
   | { type: 'model_log'; data: { line: string } }
