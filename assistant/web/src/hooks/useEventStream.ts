@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import type { AgentEvent } from '@/types'
+import type { AgentEvent, TaskState } from '@/types'
 import type { ChatAction } from '@/state/chatReducer'
 
 interface Options {
@@ -12,6 +12,7 @@ interface Options {
   onConversationUpdated: (id: number, title: string) => void
   onConversationDeleted: (id: number) => void
   onConfirmRequired?: (data: { id: string; prompt: string; timeout_sec?: number }) => void
+  onTaskUpdate?: (task: TaskState | null) => void
   onConfirmResolved?: (data: { id: string; approved: boolean }) => void
 }
 
@@ -26,6 +27,7 @@ export function useEventStream({
   onConversationDeleted,
   onConfirmRequired,
   onConfirmResolved,
+  onTaskUpdate,
 }: Options) {
   const sourceRef = useRef<EventSource | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -43,6 +45,7 @@ export function useEventStream({
     onConversationDeleted,
     onConfirmRequired,
     onConfirmResolved,
+    onTaskUpdate,
   })
   cb.current = {
     dispatch,
@@ -55,6 +58,7 @@ export function useEventStream({
     onConversationDeleted,
     onConfirmRequired,
     onConfirmResolved,
+    onTaskUpdate,
   }
 
   useEffect(() => {
@@ -75,7 +79,11 @@ export function useEventStream({
         onConfirmResolved: confRes,
       } = cb.current
       switch (event.type) {
+        case 'task_updated':
+          cb.current.onTaskUpdate?.(event.data)
+          break
         case 'init':
+          cb.current.onTaskUpdate?.(event.data.task ?? null)
           d({
             type: 'INIT',
             busy: event.data.busy,
