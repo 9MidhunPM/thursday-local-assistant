@@ -8,7 +8,9 @@
     "request_timeout_sec": 90,
     "json_retries": 2,
     "response_format": null,
-    "context_budget_tokens": 7000
+    "context_budget_tokens": 7000,
+    "api_mode": "auto",
+    "reasoning_effort": "low"
   },
   "tools": {
     "read_roots": ["~", "."],
@@ -52,6 +54,9 @@
     "extract_max_tokens": 256,
     "smart_tool_filter": true,
     "web_confirm_timeout_sec": 60,
-    "stream_responses": true
+    "stream_responses": true,
+    "task_timeout_sec": 300,
+    "recent_history_tokens": 8000,
+    "hypruse_enabled": false
   }
 }
