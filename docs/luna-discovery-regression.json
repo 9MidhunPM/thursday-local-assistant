@@ -1,0 +1,1833 @@
+{
+  "created_at": 1790749344.6846793,
+  "scope": "Synthetic tool-state evaluation; no real desktop actions, private data, or general intelligence claims.",
+  "reasoning_effort": "low",
+  "max_output_tokens": 4096,
+  "max_tool_steps": 12,
+  "models": [
+    {
+      "model": "gpt-5.6-luna",
+      "cases_run": 5,
+      "passed": 4,
+      "estimated_usd": 0.009529,
+      "seconds": 119.848,
+      "results": [
+        {
+          "case": 11,
+          "category": "followup",
+          "passed": true,
+          "seconds": 5.604,
+          "tools": [
+            "hypruse__click_ui",
+            "hypruse__desktop",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 4457,
+            "completion_tokens": 113,
+            "cached_tokens": 0,
+            "reasoning_tokens": 22,
+            "estimated_usd": 0.001027,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Preview is enabled and verified\u2014the Preview button is pressed.",
+          "outcomes": [
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x2",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": "Project note. "
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {
+                "window": "0x1"
+              }
+            },
+            {
+              "tool": "hypruse__click_ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": "Project note. "
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": true
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "name": "Preview",
+                "window": "0x1",
+                "then": "ui"
+              }
+            }
+          ]
+        },
+        {
+          "case": 15,
+          "category": "followup",
+          "passed": false,
+          "seconds": 89.989,
+          "tools": [
+            "hypruse__click_ui",
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__keyboard",
+            "hypruse__ui",
+            "read_file"
+          ],
+          "usage": {
+            "prompt_tokens": 39969,
+            "completion_tokens": 732,
+            "cached_tokens": 22507,
+            "reasoning_tokens": 317,
+            "estimated_usd": 0.004820939999999999,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Step budget reached. Resume from the checkpoint to continue.",
+          "outcomes": [
+            {
+              "tool": "read_file",
+              "success": true,
+              "content": "Launch date is Friday.",
+              "arguments": {
+                "path": "/fixture/brief.txt"
+              }
+            },
+            {
+              "tool": "discover_tools",
+              "success": true,
+              "output": [
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "hypruse__desktop",
+                    "description": "Read windows and active window before any desktop action.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {},
+                      "required": [],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "hypruse__ui",
+                    "description": "Read accessible controls and their current values in a window.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "window": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "hypruse__keyboard",
+                    "description": "Type text or press keys in an explicit target window. Verify using then='ui'.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "action": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "keys": {
+                          "type": "string"
+                        },
+                        "window": {
+                          "type": "string"
+                        },
+                        "then": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "action"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "hypruse__click_ui",
+                    "description": "Click a named accessible control in a window. Prefer this to coordinates.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "window": {
+                          "type": "string"
+                        },
+                        "then": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "hypruse__hypr",
+                    "description": "Focus a window using action='focus_window' and target address.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "action": {
+                          "type": "string"
+                        },
+                        "target": {
+                          "type": "string"
+                        },
+                        "workspace": {
+                          "type": "string"
+                        },
+                        "then": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "action"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "hypruse__launch",
+                    "description": "Launch a trusted app by command.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "string"
+                        },
+                        "workspace": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "command"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "hypruse__screenshot",
+                    "description": "Observe visual desktop evidence. Fixture reports capture geometry.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "window": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "current_time",
+                    "description": "Get current time.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {},
+                      "required": [],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "read_file",
+                    "description": "Read a file's content.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "path"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "calendar_agenda",
+                    "description": "Read calendar events.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "query": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "gmail_read",
+                    "description": "Read inbox messages.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {},
+                      "required": [],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "search_and_fetch",
+                    "description": "Research a topic using cited web sources.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "query": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "query"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "get_preference",
+                    "description": "Read a saved personal preference.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              ],
+              "arguments": {
+                "query": "Read current desktop state, identify Notes window and focused note text field, and replace its contents with provided text; verify using screenshot/accessibility."
+              }
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__hypr",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "action": "focus_window",
+                "target": "0x1",
+                "then": "ui"
+              }
+            },
+            {
+              "tool": "hypruse__ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": "Project note. "
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {
+                "window": "0x1"
+              }
+            },
+            {
+              "tool": "hypruse__keyboard",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": "Project note. Launch date is Friday."
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "action": "type",
+                "text": "Launch date is Friday.",
+                "keys": "CTRL+A",
+                "window": "0x1",
+                "then": "ui"
+              }
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": "Project note. Launch date is Friday."
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {
+                "window": "0x1"
+              }
+            },
+            {
+              "tool": "hypruse__keyboard",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": "Project note. Launch date is Friday."
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "action": "keypress",
+                "keys": "CTRL+A",
+                "window": "0x1",
+                "then": "ui"
+              }
+            },
+            {
+              "tool": "hypruse__keyboard",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": "Project note. Launch date is Friday.Launch date is Friday."
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "action": "type",
+                "text": "Launch date is Friday.",
+                "window": "0x1",
+                "then": "ui"
+              }
+            },
+            {
+              "tool": "hypruse__click_ui",
+              "success": false,
+              "error": "Read hypruse__desktop before acting; the snapshot is missing or stale.",
+              "arguments": {
+                "name": "Note text",
+                "window": "0x1",
+                "then": "ui"
+              }
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__click_ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": "Project note. Launch date is Friday.Launch date is Friday."
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "name": "Note text",
+                "window": "0x1",
+                "then": "ui"
+              }
+            }
+          ]
+        },
+        {
+          "case": 17,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 7.819,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__keyboard",
+            "hypruse__ui",
+            "read_file"
+          ],
+          "usage": {
+            "prompt_tokens": 6800,
+            "completion_tokens": 203,
+            "cached_tokens": 2308,
+            "reasoning_tokens": 33,
+            "estimated_usd": 0.0011881600000000002,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Typed the contents of `/fixture/brief.txt` into Notes.",
+          "outcomes": [
+            {
+              "tool": "read_file",
+              "success": true,
+              "content": "Launch date is Friday.",
+              "arguments": {
+                "path": "/fixture/brief.txt"
+              }
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__hypr",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "action": "focus_window",
+                "target": "0x1",
+                "then": "ui"
+              }
+            },
+            {
+              "tool": "hypruse__ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": ""
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {
+                "window": "0x1"
+              }
+            },
+            {
+              "tool": "hypruse__keyboard",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": "Launch date is Friday."
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "action": "type",
+                "text": "Launch date is Friday.",
+                "window": "0x1",
+                "then": "ui"
+              }
+            }
+          ]
+        },
+        {
+          "case": 18,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 8.04,
+          "tools": [
+            "calendar_agenda",
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__keyboard",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 7075,
+            "completion_tokens": 245,
+            "cached_tokens": 2401,
+            "reasoning_tokens": 71,
+            "estimated_usd": 0.0012768200000000001,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Typed into Notes: **Design review \u2014 15:00**.",
+          "outcomes": [
+            {
+              "tool": "calendar_agenda",
+              "success": true,
+              "events": [
+                {
+                  "title": "Design review",
+                  "start": "15:00"
+                }
+              ],
+              "arguments": {
+                "query": "next meeting"
+              }
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__hypr",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "action": "focus_window",
+                "target": "0x1",
+                "then": "ui"
+              }
+            },
+            {
+              "tool": "hypruse__ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": ""
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {
+                "window": "0x1"
+              }
+            },
+            {
+              "tool": "hypruse__keyboard",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": "Design review \u2014 15:00"
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "action": "type",
+                "text": "Design review \u2014 15:00",
+                "window": "0x1",
+                "then": "ui"
+              }
+            }
+          ]
+        },
+        {
+          "case": 24,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 8.396,
+          "tools": [
+            "gmail_read",
+            "hypruse__desktop",
+            "hypruse__keyboard",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 5952,
+            "completion_tokens": 185,
+            "cached_tokens": 1089,
+            "reasoning_tokens": 58,
+            "estimated_usd": 0.0012163800000000002,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "The demo date from your inbox is **Friday**. I entered **\u201cFriday\u201d** in Notes and verified the field value.",
+          "outcomes": [
+            {
+              "tool": "gmail_read",
+              "success": true,
+              "messages": [
+                {
+                  "sender": "fixture@example.test",
+                  "subject": "***REDACTED***",
+                  "body": "***REDACTED***"
+                }
+              ],
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x2",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": ""
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {
+                "window": "0x1"
+              }
+            },
+            {
+              "tool": "hypruse__keyboard",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": "Friday"
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "action": "type",
+                "text": "Friday",
+                "window": "0x1",
+                "then": "ui"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "gpt-6-luna",
+      "cases_run": 5,
+      "passed": 1,
+      "estimated_usd": 0.003157,
+      "seconds": 35.357,
+      "results": [
+        {
+          "case": 11,
+          "category": "followup",
+          "passed": false,
+          "seconds": 4.53,
+          "tools": [
+            "hypruse__desktop"
+          ],
+          "usage": {
+            "prompt_tokens": 3022,
+            "completion_tokens": 81,
+            "cached_tokens": 0,
+            "reasoning_tokens": 28,
+            "estimated_usd": 0.0003427,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Repeated operation produced no new evidence. Paused for review.",
+          "outcomes": [
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x2",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x2",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x2",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "case": 15,
+          "category": "followup",
+          "passed": false,
+          "seconds": 10.633,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__ui",
+            "read_file"
+          ],
+          "usage": {
+            "prompt_tokens": 18656,
+            "completion_tokens": 202,
+            "cached_tokens": 7490,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.0012925000000000002,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Repeated operation produced no new evidence. Paused for review.",
+          "outcomes": [
+            {
+              "tool": "read_file",
+              "success": true,
+              "content": "Launch date is Friday.",
+              "arguments": {
+                "path": "/fixture/brief.txt"
+              }
+            },
+            {
+              "tool": "discover_tools",
+              "success": true,
+              "output": [
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "hypruse__desktop",
+                    "description": "Read windows and active window before any desktop action.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {},
+                      "required": [],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "hypruse__ui",
+                    "description": "Read accessible controls and their current values in a window.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "window": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "hypruse__keyboard",
+                    "description": "Type text or press keys in an explicit target window. Verify using then='ui'.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "action": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "keys": {
+                          "type": "string"
+                        },
+                        "window": {
+                          "type": "string"
+                        },
+                        "then": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "action"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "hypruse__hypr",
+                    "description": "Focus a window using action='focus_window' and target address.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "action": {
+                          "type": "string"
+                        },
+                        "target": {
+                          "type": "string"
+                        },
+                        "workspace": {
+                          "type": "string"
+                        },
+                        "then": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "action"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "hypruse__launch",
+                    "description": "Launch a trusted app by command.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "string"
+                        },
+                        "workspace": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "command"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "current_time",
+                    "description": "Get current time.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {},
+                      "required": [],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "read_file",
+                    "description": "Read a file's content.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "path"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "calendar_agenda",
+                    "description": "Read calendar events.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "query": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "gmail_read",
+                    "description": "Read inbox messages.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {},
+                      "required": [],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "search_and_fetch",
+                    "description": "Research a topic using cited web sources.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "query": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "query"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "get_preference",
+                    "description": "Read a saved personal preference.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              ],
+              "arguments": {
+                "query": "Read current desktop/window state for Notes app, inspect accessibility and safely replace note text field contents, verify via screenshot/desktop UI."
+              }
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": "Project note. "
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {
+                "window": "0x1"
+              }
+            },
+            {
+              "tool": "hypruse__hypr",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "action": "focus_window",
+                "target": "0x1",
+                "then": "desktop"
+              }
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "case": 17,
+          "category": "cross_domain",
+          "passed": false,
+          "seconds": 8.392,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__ui",
+            "read_file"
+          ],
+          "usage": {
+            "prompt_tokens": 5599,
+            "completion_tokens": 96,
+            "cached_tokens": 1138,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.00050548,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Repeated operation produced no new evidence. Paused for review.",
+          "outcomes": [
+            {
+              "tool": "read_file",
+              "success": true,
+              "content": "Launch date is Friday.",
+              "arguments": {
+                "path": "/fixture/brief.txt"
+              }
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x2",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": ""
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {
+                "window": "0x1"
+              }
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x2",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x2",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "case": 18,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 7.055,
+          "tools": [
+            "calendar_agenda",
+            "hypruse__desktop",
+            "hypruse__keyboard",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 5797,
+            "completion_tokens": 118,
+            "cached_tokens": 1041,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.00054501,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Typed **Design review \u2014 15:00** into Notes.",
+          "outcomes": [
+            {
+              "tool": "calendar_agenda",
+              "success": true,
+              "events": [
+                {
+                  "title": "Design review",
+                  "start": "15:00"
+                }
+              ],
+              "arguments": {
+                "query": "next meeting"
+              }
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x2",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": ""
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {
+                "window": "0x1"
+              }
+            },
+            {
+              "tool": "hypruse__keyboard",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "value": "Design review \u2014 15:00"
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "action": "type",
+                "text": "Design review \u2014 15:00",
+                "window": "0x1",
+                "then": "ui"
+              }
+            }
+          ]
+        },
+        {
+          "case": 24,
+          "category": "cross_domain",
+          "passed": false,
+          "seconds": 4.747,
+          "tools": [
+            "gmail_read",
+            "hypruse__desktop"
+          ],
+          "usage": {
+            "prompt_tokens": 4385,
+            "completion_tokens": 65,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.000471,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Repeated operation produced no new evidence. Paused for review.",
+          "outcomes": [
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x2",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "gmail_read",
+              "success": true,
+              "messages": [
+                {
+                  "sender": "fixture@example.test",
+                  "subject": "***REDACTED***",
+                  "body": "***REDACTED***"
+                }
+              ],
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x2",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x2",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

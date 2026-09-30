@@ -1,0 +1,1010 @@
+{
+  "created_at": 1790748892.2649755,
+  "scope": "Synthetic tool-state evaluation; no real desktop actions, private data, or general intelligence claims.",
+  "reasoning_effort": "low",
+  "max_output_tokens": 4096,
+  "max_tool_steps": 12,
+  "models": [
+    {
+      "model": "gpt-5.6-luna",
+      "cases_run": 24,
+      "passed": 23,
+      "estimated_usd": 0.024557,
+      "seconds": 158.649,
+      "results": [
+        {
+          "case": 1,
+          "category": "routine",
+          "passed": true,
+          "seconds": 3.052,
+          "tools": [
+            "hypruse__desktop"
+          ],
+          "usage": {
+            "prompt_tokens": 1807,
+            "completion_tokens": 47,
+            "cached_tokens": 0,
+            "reasoning_tokens": 9,
+            "estimated_usd": 0.0004178,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Open windows on workspace 1:\n\n- Notes\n- Browser (active)"
+        },
+        {
+          "case": 2,
+          "category": "routine",
+          "passed": true,
+          "seconds": 4.069,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__hypr"
+          ],
+          "usage": {
+            "prompt_tokens": 2965,
+            "completion_tokens": 71,
+            "cached_tokens": 0,
+            "reasoning_tokens": 11,
+            "estimated_usd": 0.0006782,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Notes is focused."
+        },
+        {
+          "case": 3,
+          "category": "routine",
+          "passed": true,
+          "seconds": 6.178,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__keyboard",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 4341,
+            "completion_tokens": 131,
+            "cached_tokens": 0,
+            "reasoning_tokens": 32,
+            "estimated_usd": 0.0010254,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Typed \u201cHello Thursday\u201d into the Note text field in Notes."
+        },
+        {
+          "case": 4,
+          "category": "routine",
+          "passed": true,
+          "seconds": 6.376,
+          "tools": [
+            "hypruse__click_ui",
+            "hypruse__desktop",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 4323,
+            "completion_tokens": 144,
+            "cached_tokens": 0,
+            "reasoning_tokens": 50,
+            "estimated_usd": 0.0010374000000000002,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Preview is clicked and verified pressed (`true`) in Notes."
+        },
+        {
+          "case": 5,
+          "category": "routine",
+          "passed": true,
+          "seconds": 3.812,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__screenshot"
+          ],
+          "usage": {
+            "prompt_tokens": 2916,
+            "completion_tokens": 91,
+            "cached_tokens": 0,
+            "reasoning_tokens": 39,
+            "estimated_usd": 0.0006924000000000001,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Captured the Notes window."
+        },
+        {
+          "case": 6,
+          "category": "routine",
+          "passed": true,
+          "seconds": 2.462,
+          "tools": [
+            "current_time"
+          ],
+          "usage": {
+            "prompt_tokens": 1097,
+            "completion_tokens": 37,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.0002638,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "It\u2019s **2:30 PM** in your local timezone (**Asia/Kolkata**)."
+        },
+        {
+          "case": 7,
+          "category": "routine",
+          "passed": true,
+          "seconds": 2.023,
+          "tools": [
+            "calculate"
+          ],
+          "usage": {
+            "prompt_tokens": 1079,
+            "completion_tokens": 31,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.000253,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "17 \u00d7 23 = **391**"
+        },
+        {
+          "case": 8,
+          "category": "routine",
+          "passed": true,
+          "seconds": 2.346,
+          "tools": [
+            "store_preference"
+          ],
+          "usage": {
+            "prompt_tokens": 1146,
+            "completion_tokens": 36,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.0002724,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "I\u2019ll remember that your editor is Kate."
+        },
+        {
+          "case": 9,
+          "category": "followup",
+          "passed": true,
+          "seconds": 5.474,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__keyboard"
+          ],
+          "usage": {
+            "prompt_tokens": 4858,
+            "completion_tokens": 145,
+            "cached_tokens": 1080,
+            "reasoning_tokens": 40,
+            "estimated_usd": 0.0009512,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Typed \u201cFriday launch\u201d into the note."
+        },
+        {
+          "case": 10,
+          "category": "followup",
+          "passed": true,
+          "seconds": 3.847,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__hypr"
+          ],
+          "usage": {
+            "prompt_tokens": 3062,
+            "completion_tokens": 58,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.000682,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Notes is focused."
+        },
+        {
+          "case": 11,
+          "category": "followup",
+          "passed": true,
+          "seconds": 5.367,
+          "tools": [
+            "hypruse__click_ui",
+            "hypruse__desktop",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 4454,
+            "completion_tokens": 109,
+            "cached_tokens": 0,
+            "reasoning_tokens": 21,
+            "estimated_usd": 0.0010216000000000001,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Preview is enabled and verified in Notes."
+        },
+        {
+          "case": 12,
+          "category": "followup",
+          "passed": true,
+          "seconds": 21.872,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 9008,
+            "completion_tokens": 109,
+            "cached_tokens": 3138,
+            "reasoning_tokens": 15,
+            "estimated_usd": 0.0013675599999999999,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "The text you entered is: **\u201cProject note.\u201d**"
+        },
+        {
+          "case": 13,
+          "category": "followup",
+          "passed": true,
+          "seconds": 3.796,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__screenshot"
+          ],
+          "usage": {
+            "prompt_tokens": 3022,
+            "completion_tokens": 89,
+            "cached_tokens": 0,
+            "reasoning_tokens": 31,
+            "estimated_usd": 0.0007111999999999999,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Captured the Notes window (0x1)."
+        },
+        {
+          "case": 14,
+          "category": "followup",
+          "passed": true,
+          "seconds": 8.53,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__keyboard",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 14379,
+            "completion_tokens": 233,
+            "cached_tokens": 6767,
+            "reasoning_tokens": 62,
+            "estimated_usd": 0.0019373399999999999,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Added \u201cDesign review\u201d to the note."
+        },
+        {
+          "case": 15,
+          "category": "followup",
+          "passed": true,
+          "seconds": 20.52,
+          "tools": [
+            "hypruse__click_ui",
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__keyboard",
+            "hypruse__ui",
+            "read_file"
+          ],
+          "usage": {
+            "prompt_tokens": 36370,
+            "completion_tokens": 830,
+            "cached_tokens": 20789,
+            "reasoning_tokens": 418,
+            "estimated_usd": 0.004527980000000001,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Added the contents of `/fixture/brief.txt` to the note."
+        },
+        {
+          "case": 16,
+          "category": "followup",
+          "passed": true,
+          "seconds": 4.195,
+          "tools": [
+            "hypruse__desktop"
+          ],
+          "usage": {
+            "prompt_tokens": 1885,
+            "completion_tokens": 52,
+            "cached_tokens": 0,
+            "reasoning_tokens": 9,
+            "estimated_usd": 0.0004394,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Currently open windows:\n\n- Notes (0x1)\n- Browser (0x2, active)"
+        },
+        {
+          "case": 17,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 7.636,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__keyboard",
+            "hypruse__ui",
+            "read_file"
+          ],
+          "usage": {
+            "prompt_tokens": 6800,
+            "completion_tokens": 203,
+            "cached_tokens": 2308,
+            "reasoning_tokens": 33,
+            "estimated_usd": 0.0011881600000000002,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Typed the contents of `/fixture/brief.txt` into Notes."
+        },
+        {
+          "case": 18,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 7.918,
+          "tools": [
+            "calendar_agenda",
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__keyboard",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 8178,
+            "completion_tokens": 227,
+            "cached_tokens": 2404,
+            "reasoning_tokens": 69,
+            "estimated_usd": 0.0014752799999999998,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Added to Notes: **Design review \u2014 15:00**."
+        },
+        {
+          "case": 19,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 3.789,
+          "tools": [
+            "gmail_read",
+            "write_file"
+          ],
+          "usage": {
+            "prompt_tokens": 2105,
+            "completion_tokens": 101,
+            "cached_tokens": 0,
+            "reasoning_tokens": 34,
+            "estimated_usd": 0.0005422000000000001,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "The demo date from your inbox is **Friday**. I wrote it to `/fixture/demo.txt`."
+        },
+        {
+          "case": 20,
+          "category": "cross_domain",
+          "passed": false,
+          "seconds": 2.078,
+          "tools": [],
+          "usage": {
+            "prompt_tokens": 574,
+            "completion_tokens": 107,
+            "cached_tokens": 0,
+            "reasoning_tokens": 65,
+            "estimated_usd": 0.00024320000000000003,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "What fixture do you mean? Please provide the fixture\u2019s name, project, or URL so I can research its version and save the answer and source URL to `/fixture/version.txt`."
+        },
+        {
+          "case": 21,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 13.292,
+          "tools": [
+            "calculate",
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__keyboard",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 14996,
+            "completion_tokens": 399,
+            "cached_tokens": 6927,
+            "reasoning_tokens": 121,
+            "estimated_usd": 0.0022311400000000004,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Calculated 4 + 5 = 9 and entered **9** into Notes."
+        },
+        {
+          "case": 22,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 6.124,
+          "tools": [
+            "current_time",
+            "write_file"
+          ],
+          "usage": {
+            "prompt_tokens": 2008,
+            "completion_tokens": 85,
+            "cached_tokens": 0,
+            "reasoning_tokens": 17,
+            "estimated_usd": 0.0005036,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Current time (Asia/Kolkata): **14:30**. Written to `/fixture/time.txt`."
+        },
+        {
+          "case": 23,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 4.335,
+          "tools": [
+            "calendar_agenda",
+            "read_file",
+            "write_file"
+          ],
+          "usage": {
+            "prompt_tokens": 2368,
+            "completion_tokens": 149,
+            "cached_tokens": 0,
+            "reasoning_tokens": 23,
+            "estimated_usd": 0.0006524,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Read `/fixture/brief.txt` and your calendar, then saved the combined brief to `/fixture/combined.txt`."
+        },
+        {
+          "case": 24,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 9.558,
+          "tools": [
+            "gmail_read",
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__keyboard",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 7968,
+            "completion_tokens": 230,
+            "cached_tokens": 2375,
+            "reasoning_tokens": 68,
+            "estimated_usd": 0.0014421000000000002,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "The demo date from your inbox is **Friday**. I entered **\u201cFriday\u201d** in Notes and verified the field value."
+        }
+      ]
+    },
+    {
+      "model": "gpt-6-luna",
+      "cases_run": 24,
+      "passed": 19,
+      "estimated_usd": 0.010276,
+      "seconds": 128.786,
+      "results": [
+        {
+          "case": 1,
+          "category": "routine",
+          "passed": true,
+          "seconds": 2.602,
+          "tools": [
+            "hypruse__desktop"
+          ],
+          "usage": {
+            "prompt_tokens": 1792,
+            "completion_tokens": 39,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.0001987,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "There are two open windows on workspace 1:\n\n- Notes\n- Browser (active)"
+        },
+        {
+          "case": 2,
+          "category": "routine",
+          "passed": true,
+          "seconds": 4.29,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__hypr"
+          ],
+          "usage": {
+            "prompt_tokens": 2933,
+            "completion_tokens": 60,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.0003233,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "The Notes window is focused."
+        },
+        {
+          "case": 3,
+          "category": "routine",
+          "passed": true,
+          "seconds": 6.124,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__keyboard",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 4254,
+            "completion_tokens": 93,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.00047190000000000003,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Typed \u201cHello Thursday\u201d into the Note text field in Notes."
+        },
+        {
+          "case": 4,
+          "category": "routine",
+          "passed": true,
+          "seconds": 5.086,
+          "tools": [
+            "hypruse__click_ui",
+            "hypruse__desktop",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 4218,
+            "completion_tokens": 86,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.0004648,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Clicked Preview in Notes and verified it is pressed."
+        },
+        {
+          "case": 5,
+          "category": "routine",
+          "passed": true,
+          "seconds": 3.869,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__screenshot"
+          ],
+          "usage": {
+            "prompt_tokens": 2847,
+            "completion_tokens": 50,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.0003097,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Captured the Notes window."
+        },
+        {
+          "case": 6,
+          "category": "routine",
+          "passed": true,
+          "seconds": 2.324,
+          "tools": [
+            "current_time"
+          ],
+          "usage": {
+            "prompt_tokens": 1093,
+            "completion_tokens": 34,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.0001263,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "It\u2019s 2:30 PM in your timezone (Asia/Kolkata)."
+        },
+        {
+          "case": 7,
+          "category": "routine",
+          "passed": true,
+          "seconds": 2.599,
+          "tools": [
+            "calculate"
+          ],
+          "usage": {
+            "prompt_tokens": 1075,
+            "completion_tokens": 31,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.000123,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "17 \u00d7 23 = 391."
+        },
+        {
+          "case": 8,
+          "category": "routine",
+          "passed": true,
+          "seconds": 2.843,
+          "tools": [
+            "store_preference"
+          ],
+          "usage": {
+            "prompt_tokens": 1145,
+            "completion_tokens": 36,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.0001325,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "I\u2019ll remember that you use Kate."
+        },
+        {
+          "case": 9,
+          "category": "followup",
+          "passed": true,
+          "seconds": 8.301,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__keyboard",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 10644,
+            "completion_tokens": 156,
+            "cached_tokens": 4898,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.00070158,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Added \u201cFriday launch\u201d to the note."
+        },
+        {
+          "case": 10,
+          "category": "followup",
+          "passed": true,
+          "seconds": 5.189,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__hypr"
+          ],
+          "usage": {
+            "prompt_tokens": 3056,
+            "completion_tokens": 63,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.0003371,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Focused the Notes window (0x1)."
+        },
+        {
+          "case": 11,
+          "category": "followup",
+          "passed": false,
+          "seconds": 3.52,
+          "tools": [
+            "hypruse__desktop"
+          ],
+          "usage": {
+            "prompt_tokens": 3022,
+            "completion_tokens": 51,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.0003277,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Repeated operation produced no new evidence. Paused for review."
+        },
+        {
+          "case": 12,
+          "category": "followup",
+          "passed": true,
+          "seconds": 4.838,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 8435,
+            "completion_tokens": 86,
+            "cached_tokens": 3046,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.00061236,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "The text you entered is: \u201cProject note.\u201d"
+        },
+        {
+          "case": 13,
+          "category": "followup",
+          "passed": true,
+          "seconds": 4.363,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__screenshot"
+          ],
+          "usage": {
+            "prompt_tokens": 2964,
+            "completion_tokens": 54,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.00032340000000000005,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Captured the Notes window (0x1)."
+        },
+        {
+          "case": 14,
+          "category": "followup",
+          "passed": true,
+          "seconds": 7.497,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__keyboard",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 11917,
+            "completion_tokens": 141,
+            "cached_tokens": 4841,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.00082651,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Added \u201cDesign review\u201d to the note; the text field now reads \u201cProject note. Design review\u201d."
+        },
+        {
+          "case": 15,
+          "category": "followup",
+          "passed": false,
+          "seconds": 10.109,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "read_file"
+          ],
+          "usage": {
+            "prompt_tokens": 15421,
+            "completion_tokens": 179,
+            "cached_tokens": 6868,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.00101348,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Repeated operation produced no new evidence. Paused for review."
+        },
+        {
+          "case": 16,
+          "category": "followup",
+          "passed": true,
+          "seconds": 3.352,
+          "tools": [
+            "hypruse__desktop"
+          ],
+          "usage": {
+            "prompt_tokens": 1870,
+            "completion_tokens": 48,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.000211,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Currently open windows:\n\n- **Notes** \u2014 `0x1`\n- **Browser** \u2014 `0x2` (active)"
+        },
+        {
+          "case": 17,
+          "category": "cross_domain",
+          "passed": false,
+          "seconds": 5.421,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__ui",
+            "read_file"
+          ],
+          "usage": {
+            "prompt_tokens": 5599,
+            "completion_tokens": 96,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.0006079,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Repeated operation produced no new evidence. Paused for review."
+        },
+        {
+          "case": 18,
+          "category": "cross_domain",
+          "passed": false,
+          "seconds": 10.166,
+          "tools": [
+            "calendar_agenda",
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 9879,
+            "completion_tokens": 144,
+            "cached_tokens": 3645,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.0007318500000000001,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Repeated operation produced no new evidence. Paused for review."
+        },
+        {
+          "case": 19,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 4.056,
+          "tools": [
+            "gmail_read",
+            "write_file"
+          ],
+          "usage": {
+            "prompt_tokens": 2044,
+            "completion_tokens": 59,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.0002339,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "The demo is Friday. I wrote `Friday` to `/fixture/demo.txt`."
+        },
+        {
+          "case": 20,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 4.089,
+          "tools": [
+            "search_and_fetch",
+            "write_file"
+          ],
+          "usage": {
+            "prompt_tokens": 2155,
+            "completion_tokens": 99,
+            "cached_tokens": 0,
+            "reasoning_tokens": 15,
+            "estimated_usd": 0.000265,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Fixture version: **42**. Saved it with its source URL to `/fixture/version.txt`."
+        },
+        {
+          "case": 21,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 11.088,
+          "tools": [
+            "calculate",
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__keyboard",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 9308,
+            "completion_tokens": 165,
+            "cached_tokens": 2366,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.00080036,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "4 + 5 = 9, and I typed **9** into Notes."
+        },
+        {
+          "case": 22,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 4.726,
+          "tools": [
+            "current_time",
+            "write_file"
+          ],
+          "usage": {
+            "prompt_tokens": 1974,
+            "completion_tokens": 71,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.0002329,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Wrote the current time, **14:30 Asia/Kolkata**, to `/fixture/time.txt`."
+        },
+        {
+          "case": 23,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 4.574,
+          "tools": [
+            "calendar_agenda",
+            "read_file",
+            "write_file"
+          ],
+          "usage": {
+            "prompt_tokens": 2342,
+            "completion_tokens": 130,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.00029920000000000006,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Saved the combined brief to `/fixture/combined.txt`, including the Friday launch date and your 15:00 design review."
+        },
+        {
+          "case": 24,
+          "category": "cross_domain",
+          "passed": false,
+          "seconds": 7.76,
+          "tools": [
+            "gmail_read",
+            "hypruse__desktop",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 7357,
+            "completion_tokens": 119,
+            "cached_tokens": 2148,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.00060188,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Repeated operation produced no new evidence. Paused for review."
+        }
+      ]
+    }
+  ]
+}
