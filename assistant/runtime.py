@@ -70,6 +70,7 @@ class AssistantRuntime:
         from .tools.reels_tool import stop_reels_watcher
 
         stop_reels_watcher()
+        self.agent.close()
         if self.llm:
             self.llm.close()
         if self.tts:
@@ -93,12 +94,20 @@ def build_runtime(config_path: Path | None = None) -> AssistantRuntime:
         response_format=config.model.response_format,
         provider=config.model.provider,
         api_key=config.model.api_key,
+        api_mode=config.model.api_mode,
+        reasoning_effort=config.model.reasoning_effort,
     )
 
     # Session budget scales with model context
-    session_tokens = min(4000, max(600, config.model.context_budget_tokens // 8))
+    session_tokens = (min(config.agent.recent_history_tokens, config.model.context_budget_tokens // 2)
+                      if not llm.is_local else min(4000, max(600, config.model.context_budget_tokens // 8)))
 
     tool_registry = ToolRegistry.load_builtin(config.tools)
+    bridge = None
+    if config.agent.hypruse_enabled:
+        from assistant.integrations.hypruse import HypruseBridge, HypruseTool
+        bridge = HypruseBridge(tool_registry)
+        tool_registry.register(HypruseTool(bridge))
     memory = LongTermMemory(Path(config.memory.db_path))
     conversation_store = ConversationStore(Path(config.memory.db_path))
     short_term = SessionMemory(conversation_store, max_tokens=session_tokens)
@@ -121,8 +130,12 @@ def build_runtime(config_path: Path | None = None) -> AssistantRuntime:
             enabled_tool_groups=tuple(config.tools.enabled_groups),
             web_confirm_timeout_sec=config.agent.web_confirm_timeout_sec,
             user_name=config.agent.user_name,
+            task_timeout_sec=config.agent.task_timeout_sec,
         ),
     )
+    from assistant.agent.tasks import TaskStore
+    agent.tasks = TaskStore(Path(config.memory.db_path))
+    agent.hypruse = bridge
     tts = _build_tts(config)
     stt = _build_stt(config)
 
