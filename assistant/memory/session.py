@@ -63,6 +63,7 @@ def _dict_to_message(raw: dict[str, Any]) -> Message:
         name=raw.get("tool_name") or raw.get("name"),
         tool_call_id=raw.get("tool_call_id"),
         tool_calls=tool_calls,
+        response_items=raw.get("response_items"),
     )
 
 
@@ -114,6 +115,7 @@ class SessionMemory:
                 tool_name=message.name,
                 tool_call_id=message.tool_call_id,
                 tool_calls=_tool_calls_to_dicts(message.tool_calls),
+                response_items=message.response_items,
             )
 
     def extend(self, messages: Iterable[Message]) -> None:
@@ -122,3 +124,7 @@ class SessionMemory:
 
     def as_list(self) -> list[Message]:
         return self._buffer.as_list()
+
+    @property
+    def summary(self):
+        return self._buffer.summary
