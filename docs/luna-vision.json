@@ -1,0 +1,8 @@
+{
+  "model": "gpt-6-luna",
+  "passed": true,
+  "answer": "Top field: \u201cThursday verified\u201d  \nButton: \u201cPreview\u201d  \nBottom status: \u201cPreviewed\u201d",
+  "input_tokens": 1794,
+  "output_tokens": 25,
+  "scope": "Cropped owned GTK QA window only; no private desktop data"
+}

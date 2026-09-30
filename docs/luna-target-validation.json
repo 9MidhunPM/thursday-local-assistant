@@ -1,0 +1,552 @@
+{
+  "created_at": 1790750053.0807238,
+  "scope": "Synthetic tool-state evaluation; no real desktop actions, private data, or general intelligence claims.",
+  "reasoning_effort": "low",
+  "max_output_tokens": 4096,
+  "max_tool_steps": 12,
+  "models": [
+    {
+      "model": "gpt-5.6-luna",
+      "cases_run": 2,
+      "passed": 2,
+      "estimated_usd": 0.002606,
+      "seconds": 16.394,
+      "results": [
+        {
+          "case": 4,
+          "category": "routine",
+          "passed": true,
+          "seconds": 9.877,
+          "tools": [
+            "hypruse__click_ui",
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 8213,
+            "completion_tokens": 182,
+            "cached_tokens": 2343,
+            "reasoning_tokens": 29,
+            "estimated_usd": 0.00143926,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Preview was clicked in Notes and verified as pressed.",
+          "outcomes": [
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__hypr",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "action": "focus_window",
+                "target": "0x1",
+                "then": "ui"
+              }
+            },
+            {
+              "tool": "hypruse__ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "role": "entry",
+                    "clickable": true,
+                    "value": ""
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "clickable": true,
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {
+                "window": "Notes"
+              }
+            },
+            {
+              "tool": "hypruse__click_ui",
+              "success": false,
+              "error": "Use a current window address, not a title or app name. Observed targets: [{\"address\": \"0x1\", \"title\": \"Notes\"}, {\"address\": \"0x2\", \"title\": \"Browser\"}]",
+              "arguments": {
+                "name": "Preview",
+                "window": "Notes",
+                "then": "ui"
+              }
+            },
+            {
+              "tool": "hypruse__click_ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "role": "entry",
+                    "clickable": true,
+                    "value": ""
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "clickable": true,
+                    "pressed": true
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "name": "Preview",
+                "window": "0x1",
+                "then": "ui"
+              }
+            }
+          ]
+        },
+        {
+          "case": 17,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 6.517,
+          "tools": [
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__keyboard",
+            "hypruse__ui",
+            "read_file"
+          ],
+          "usage": {
+            "prompt_tokens": 5599,
+            "completion_tokens": 227,
+            "cached_tokens": 1252,
+            "reasoning_tokens": 45,
+            "estimated_usd": 0.0011668400000000002,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Typed the contents of `/fixture/brief.txt` into Notes.",
+          "outcomes": [
+            {
+              "tool": "read_file",
+              "success": true,
+              "content": "Launch date is Friday.",
+              "arguments": {
+                "path": "/fixture/brief.txt"
+              }
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "role": "entry",
+                    "clickable": true,
+                    "value": ""
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "clickable": true,
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {
+                "window": "0x1"
+              }
+            },
+            {
+              "tool": "hypruse__hypr",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "action": "focus_window",
+                "target": "0x1",
+                "then": "ui"
+              }
+            },
+            {
+              "tool": "hypruse__keyboard",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "role": "entry",
+                    "clickable": true,
+                    "value": "Launch date is Friday."
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "clickable": true,
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "action": "type",
+                "text": "Launch date is Friday.",
+                "window": "0x1",
+                "then": "ui"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "gpt-6-luna",
+      "cases_run": 2,
+      "passed": 2,
+      "estimated_usd": 0.001043,
+      "seconds": 21.088,
+      "results": [
+        {
+          "case": 4,
+          "category": "routine",
+          "passed": true,
+          "seconds": 5.019,
+          "tools": [
+            "hypruse__click_ui",
+            "hypruse__desktop",
+            "hypruse__ui"
+          ],
+          "usage": {
+            "prompt_tokens": 4402,
+            "completion_tokens": 82,
+            "cached_tokens": 1075,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.00038445000000000005,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Preview in Notes is pressed.",
+          "outcomes": [
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x2",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "role": "entry",
+                    "clickable": true,
+                    "value": ""
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "clickable": true,
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {
+                "window": "0x1"
+              }
+            },
+            {
+              "tool": "hypruse__click_ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "role": "entry",
+                    "clickable": true,
+                    "value": ""
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "clickable": true,
+                    "pressed": true
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "name": "Preview",
+                "window": "0x1",
+                "then": "ui"
+              }
+            }
+          ]
+        },
+        {
+          "case": 17,
+          "category": "cross_domain",
+          "passed": true,
+          "seconds": 16.069,
+          "tools": [
+            "hypruse__click_ui",
+            "hypruse__desktop",
+            "hypruse__hypr",
+            "hypruse__keyboard",
+            "hypruse__ui",
+            "read_file"
+          ],
+          "usage": {
+            "prompt_tokens": 9838,
+            "completion_tokens": 189,
+            "cached_tokens": 4662,
+            "reasoning_tokens": 0,
+            "estimated_usd": 0.00065872,
+            "pricing_note": "Standard short-context estimate; excludes tools and cache writes."
+          },
+          "error": null,
+          "answer": "Typed \u201cLaunch date is Friday.\u201d into Notes and verified it appears in the Note text field.",
+          "outcomes": [
+            {
+              "tool": "read_file",
+              "success": true,
+              "content": "Launch date is Friday.",
+              "arguments": {
+                "path": "/fixture/brief.txt"
+              }
+            },
+            {
+              "tool": "hypruse__desktop",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {}
+            },
+            {
+              "tool": "hypruse__hypr",
+              "success": true,
+              "output": {
+                "active_window": "0x1",
+                "windows": [
+                  {
+                    "address": "0x1",
+                    "class": "notes",
+                    "title": "Notes",
+                    "workspace": 1
+                  },
+                  {
+                    "address": "0x2",
+                    "class": "browser",
+                    "title": "Browser",
+                    "workspace": 1
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "action": "focus_window",
+                "target": "0x1",
+                "then": "ui"
+              }
+            },
+            {
+              "tool": "hypruse__ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "role": "entry",
+                    "clickable": true,
+                    "value": ""
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "clickable": true,
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "observed",
+              "arguments": {
+                "window": "0x1"
+              }
+            },
+            {
+              "tool": "hypruse__click_ui",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "role": "entry",
+                    "clickable": true,
+                    "value": ""
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "clickable": true,
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "name": "Note text",
+                "window": "0x1",
+                "then": "ui"
+              }
+            },
+            {
+              "tool": "hypruse__keyboard",
+              "success": true,
+              "output": {
+                "elements": [
+                  {
+                    "name": "Note text",
+                    "role": "entry",
+                    "clickable": true,
+                    "value": "Launch date is Friday."
+                  },
+                  {
+                    "name": "Preview",
+                    "role": "button",
+                    "clickable": true,
+                    "pressed": false
+                  }
+                ]
+              },
+              "verification": "action delivered; inspect returned state",
+              "arguments": {
+                "action": "type",
+                "text": "Launch date is Friday.",
+                "window": "0x1",
+                "then": "ui"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
