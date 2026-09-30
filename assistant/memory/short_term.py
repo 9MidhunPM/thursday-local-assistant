@@ -18,12 +18,14 @@ class Message:
     name: str | None = None
     tool_call_id: str | None = None
     tool_calls: list[Any] | None = None
+    response_items: list[dict[str, Any]] | None = None
 
 
 @dataclass
 class ShortTermMemory:
     messages: list[Message] = field(default_factory=list)
     max_tokens: int = 1500  # Leave room for the 2048 context limit
+    summary: str = ""
 
     def _estimate_tokens(self) -> int:
         # A rough but safe heuristic: 1 token ~= 4 characters
@@ -48,12 +50,17 @@ class ShortTermMemory:
     def _prune(self) -> None:
         # Protect recent messages, drop the oldest ones until under the limit
         while len(self.messages) > 1 and self._estimate_tokens() > self.max_tokens:
-            self.messages.pop(0)
+            self._remember_pruned(self.messages.pop(0))
             # A tool result is only legal immediately after the assistant
             # tool_calls message that requested it. If that parent was pruned,
             # prune every newly orphaned result with it.
             while self.messages and self.messages[0].role == "tool":
-                self.messages.pop(0)
+                self._remember_pruned(self.messages.pop(0))
+
+    def _remember_pruned(self, message):
+        if message.role in {"user", "tool"} and message.content:
+            entry = f"{message.role} {message.name or ''}: {message.content[:1200]}"
+            self.summary = (self.summary + "\n" + entry)[-6000:]
 
     def as_list(self) -> list[Message]:
         return self._valid_tool_history()
