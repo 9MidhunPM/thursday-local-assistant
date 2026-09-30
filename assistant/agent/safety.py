@@ -45,6 +45,8 @@ DEFAULT_BLACKLIST = [
 ]
 
 DEFAULT_CONFIRM = [
+    r"(?i)\b(hypruse|hyprctl|wtype|ydotool|xdotool|wlrctl)\b",
+    r"(?i)\b(curl|wget)\b.*(?:--request|-X|--data|-d|--post-data|--upload-file)",
     r"(?i)\bsudo\b",
     r"(?i)\bapt(-get)?\s+(install|remove|purge)\b",
     r"(?i)\bpip\s+install\b",
