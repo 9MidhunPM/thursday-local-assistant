@@ -14,6 +14,13 @@ class ToolRegistry:
     _tools: dict[str, BaseTool] = field(default_factory=dict)
 
     def register(self, tool: BaseTool) -> None:
+        from dataclasses import replace
+        safe_reads = {"current_time", "current_date", "calculate", "convert", "read_file",
+                      "search_files", "find_folders", "find_file_system", "system_status",
+                      "system_monitor", "get_preference", "recall_memory", "search_personal_knowledge",
+                      "get_entity_profile", "list_all_memory", "web_search", "fetch_page", "search_and_fetch"}
+        if tool.name in safe_reads:
+            tool.metadata = replace(tool.metadata, effect="read", parallel_safe=True)
         self._tools[tool.name] = tool
 
     def tools(self) -> Iterable[BaseTool]:
