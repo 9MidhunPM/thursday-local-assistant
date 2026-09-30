@@ -12,6 +12,9 @@ class ToolMetadata:
     name: str
     description: str
     parameters: dict[str, Any]
+    effect: str = "mutation"
+    parallel_safe: bool = False
+    resource: str = ""
 
 
 class BaseTool(ABC):
