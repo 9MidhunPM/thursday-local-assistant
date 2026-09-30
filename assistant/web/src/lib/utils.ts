@@ -25,10 +25,16 @@ export function formatUserMessage(text: string): string {
   }
 }
 
+function formatToolValue(value: unknown): string {
+  return typeof value === 'object' && value !== null
+    ? JSON.stringify(value, null, 2)
+    : String(value)
+}
+
 export function formatToolArgs(args: string | Record<string, unknown>): string {
   if (typeof args === 'object' && args !== null) {
     return Object.entries(args)
-      .map(([k, v]) => `${k.charAt(0).toUpperCase() + k.slice(1)}: ${v}`)
+      .map(([k, v]) => `${k.charAt(0).toUpperCase() + k.slice(1)}: ${formatToolValue(v)}`)
       .join('\n')
   }
   return String(args)
@@ -40,13 +46,14 @@ export function parseToolResult(data: {
   error?: unknown
   [key: string]: unknown
 }): { text: string; isError: boolean } {
-  const isError = data.success === false
+  let isError = data.success === false
 
   let resultStr = ''
 
   if (typeof data.result === 'string') {
     try {
       const parsed = JSON.parse(data.result)
+      if (parsed.success === false) isError = true
       if (parsed.output !== undefined) data.output = parsed.output
       if (parsed.error !== undefined) data.error = parsed.error
     } catch {
@@ -56,14 +63,14 @@ export function parseToolResult(data: {
 
   if (data.output !== undefined) {
     if (Array.isArray(data.output)) {
-      resultStr = data.output.join('\n')
+      resultStr = data.output.map(formatToolValue).join('\n')
     } else if (typeof data.output === 'object' && data.output !== null) {
       resultStr = JSON.stringify(data.output, null, 2)
     } else {
       resultStr = String(data.output)
     }
   } else if (data.error !== undefined) {
-    resultStr = String(data.error)
+    resultStr = formatToolValue(data.error)
   } else {
     const cleanObj: Record<string, unknown> = {}
     for (const k in data) {
@@ -74,7 +81,7 @@ export function parseToolResult(data: {
     resultStr =
       Object.keys(cleanObj).length > 0
         ? Object.entries(cleanObj)
-            .map(([k, v]) => `${k.charAt(0).toUpperCase() + k.slice(1)}: ${v}`)
+            .map(([k, v]) => `${k.charAt(0).toUpperCase() + k.slice(1)}: ${formatToolValue(v)}`)
             .join('\n')
         : 'Done'
   }
