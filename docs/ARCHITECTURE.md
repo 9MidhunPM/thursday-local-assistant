@@ -1,152 +1,162 @@
-# Thursday architecture and internals
+# Architecture and internals
 
-Thursday is a single-user Linux desktop agent built around one practical rule: reasoning and action
-should be separate, observable layers. The model decides what capability is needed; deterministic
-Python tools perform the work; the interface shows what happened.
+Thursday is a single-user Linux desktop agent. One backend owns conversations, tasks, tools, and
+voice capture. The native companion and web app observe that state and submit explicit commands.
+The model chooses capabilities; Python tools execute them and report evidence.
 
 ## System map
 
-```text
-┌──────────────────────────────── Interfaces ────────────────────────────────┐
-│ CLI chat · Web UI · Super+C launcher · Super+Alt voice overlay            │
-└────────────────────────────────────┬────────────────────────────────────────┘
-                                     │ HTTP / SSE / direct CLI calls
-┌────────────────────────────────────▼────────────────────────────────────────┐
-│ Server and runtime                                                          │
-│ lifecycle · auth · conversations · event broadcast · voice · health         │
-└────────────────────────────────────┬────────────────────────────────────────┘
-                                     │ normalized user turn
-┌────────────────────────────────────▼────────────────────────────────────────┐
-│ Agent                                                                         │
-│ short-term context · prompt budget · smart tool groups · tool loop · memory  │
-└───────────────────┬────────────────────────────────────┬─────────────────────┘
-                    │                                    │
-        ┌───────────▼────────────┐          ┌────────────▼───────────────────┐
-        │ OpenAI-compatible LLM  │          │ Deterministic capability layer │
-        │ local or cloud         │          │ files · desktop · browser ·    │
-        │ streamed responses     │          │ Gmail · Calendar · Codex · ... │
-        └───────────┬────────────┘          └────────────┬───────────────────┘
-                    └────────────────────┬───────────────┘
-                                         │
-                         visible result + persisted history
+```mermaid
+flowchart TD
+    Keys[Super+Alt via supervised evdev service] --> Voice[Backend voice controller]
+    Native[Quickshell root companion] <-->|JSONL| Helper[Private native Python helper]
+    Helper <-->|Authenticated HTTP and SSE| Server[Thursday backend user service]
+    Web[React web app] <-->|HTTP and SSE| Server
+    CLI[CLI] --> Agent[Agent and task checkpoints]
+    Voice --> Server
+    Server --> Agent
+    Agent <--> Model[Configured local or cloud model]
+    Agent --> Tools[Files, system, browser, media, Codex]
+    Agent --> Hypruse[Owned Hypruse MCP child]
+    Agent <--> Store[Local SQLite history and memory]
+    Server --> TTS[Edge TTS synthesis queue]
+    TTS --> Server
+    Server -->|Client and generation scoped audio| Helper
 ```
 
-## Request lifecycle
+Default cloud model, Google STT, and Edge TTS are independent network dependencies. A local
+server or SQLite database does not imply that prompts, microphone audio, or speech text remain
+on the machine. [Data handling](NATIVE_DESKTOP.md#privacy-and-data-flow) describes each boundary.
 
-1. The CLI, browser, or voice layer submits a user turn.
-2. The server checks the busy lock before activating a conversation, creates a durable task run,
-   and broadcasts task and conversation IDs over Server-Sent Events.
-3. The agent builds a bounded context from the current conversation, relevant memories, and the
-   system contract.
-4. Keyword groups and follow-up routing reduce the initial catalog. `discover_tools` can add
-   capabilities for subsequent steps; explicit cross-domain calendar work retains other tools.
-5. OpenAI uses stateless Responses with encrypted reasoning-item replay; other providers retain
-   Chat Completions. Only complete, parsed, schema-valid calls reach the executor.
-6. Safety checks validate paths, shell policy, authentication, and confirmation requirements before
-   a tool runs.
-7. Tool calls, chunks, results, errors, and confirmations are broadcast to the UI. The model can use
-   those results for the next step, up to the configured tool-step budget.
-8. Each action outcome is checkpointed immediately. Cancellation and budgets stop further work,
-   and resuming creates a new run with the prior outcomes. Personal extraction runs in a bounded
-   queue, accepts only literal user evidence, and stores provenance separately from working context.
+## Process and interface ownership
 
-## Major components
+- `thursday.service` runs the backend in the checkout's virtual environment. Its user-service
+  lifecycle is independent of chat/window visibility.
+- `thursday-hotkeys.service` owns evdev input forwarding. It sends start/stop/cancel commands to
+  the backend; it does not own a second recorder or transcript overlay.
+- `desktop/quickshell/Thursday.qml` is instantiated once at the shell root, outside per-monitor
+  bar variants. It owns one chat/HUD state model and one audio queue. The bar button calls IPC.
+- `assistant/native_client.py` is the companion's child transport. It loads private configuration,
+  sends token headers, reconstructs complete SSE records, reconnects, and downloads audio into
+  private runtime files. Credentials never cross its JSONL boundary into QML.
+- The React app provides detailed conversation history, tool results, task evidence, memory
+  review, and Codex controls. The legacy HTML fallback is a basic compatibility surface.
+- `assistant/desktop_install.py` installs the supported existing Hyprland Lua/Quickshell layout
+  using an allowlist, private backups, and managed-file hashes. Unsupported layouts and conflicting
+  edits are rejected. Uninstall preserves the complete installation when a conflict needs review.
 
-### Interfaces and server
+The session wrapper imports the live display, runtime, compositor, and session-bus variables into
+the user service manager. Services restart after failures within bounded systemd limits; missing
+optional dependencies can exit with a stable diagnostic instead of an endless restart loop.
+`run.sh` checks dependencies without installing them. The desktop wrappers start the installed
+services and request native IPC; closing chat never shuts down the backend.
 
-- `assistant/main.py` selects CLI or web mode and owns process startup.
-- `assistant/server.py` serves the UI, JSON APIs, audio, conversation routes, health data, the Brave
-  bridge, and the SSE stream used for live tokens and tool cards.
-- The React client in `assistant/web` is the primary maintained UI. The self-contained fallback in
-  `assistant/gui/index.html` allows clones to run even when a fresh frontend build is unavailable.
-- The desktop launcher keeps one Thursday window alive, focuses an existing instance, and shuts the
-  backend down when the final app window closes.
+## Request and task lifecycle
 
-### Model and agent
+1. Native chat, the web app, or the shared voice controller submits a turn. The HTTP server checks
+   the busy lock before activating a conversation, creates a durable task, and publishes IDs.
+2. The agent builds bounded context from the conversation, relevant memories, and system prompt.
+   Initial tool groups reduce the catalog; `discover_tools` adds capabilities when needed.
+3. OpenAI uses stateless Responses with reasoning-item replay; compatible/local endpoints use
+   their configured transport. Only parsed, schema-valid calls reach execution.
+4. Path, shell, desktop target, and approval rules are checked. Independent safe reads may run
+   together; desktop mutations and mixed action batches remain ordered.
+5. SSE carries tokens, tool activity/results, approvals, voice state, and task updates. Native text
+   is rendered as plain text. The native view preserves unsent drafts and rejects stale history
+   snapshots when another surface changes the shared active conversation.
+6. Delivered outcomes are checkpointed. Stop cooperatively cancels future work and owned model/
+   desktop activity. Resume creates a child task with prior outcomes; it cannot undo delivered
+   actions. A backend restart marks unfinished runs interrupted.
+7. A bounded extraction queue stores personal facts only from literal user evidence, retaining
+   provenance separately from temporary model context.
 
-- `assistant/llm` normalizes local llama.cpp and cloud OpenAI-compatible endpoints behind one chat
-  client.
-- Provider-specific payload rules handle GPT-5-style token and reasoning fields without breaking
-  local models.
-- `assistant/agent` owns the iterative tool loop, conversation context, safety integration, retries,
-  streaming, and memory extraction.
-- Smart tool grouping reduces prompt size and tool-choice noise while retaining explicit follow-up
-  behaviors such as “open the second one.”
-- Tool metadata controls concurrency: only explicitly safe reads run in parallel; mixed batches
-  and desktop operations run serially. Tasks expose step/time limits and detect repeated outcomes.
-- Context keeps complete tool exchanges, bounded user/tool excerpts, and recent task outcomes.
-  Images are supplied transiently on the next request and never placed in conversation history.
+Approvals are recovered through `init.pending_confirms` after reconnect. The backend rejects
+expired requests and publishes their resolution. After approval, the desktop adapter observes
+again, revalidates the target, and delivers once. A finished response is not a universal guarantee
+that every requested real-world effect was verified.
 
-### Tools and integrations
+## Voice and playback
 
-- `assistant/tools/registry.py` discovers built-in modules dynamically. A module can export
-  `get_tools()` or a single `TOOL_CLASS`.
-- Tools declare an OpenAI function schema through `ToolMetadata`, then implement deterministic
-  execution in Python.
-- Desktop tools use native Linux interfaces such as MPRIS, Hyprland, Thunar, `plocate`, and system
-  utilities.
-- The managed Brave Helper communicates through a loopback bridge and the user's normal signed-in
-  browser profile. Gmail drafting never presses Send; Calendar writes require confirmation.
-- `assistant/integrations/hypruse.py` owns a lazy stdio MCP child. Live schemas are registered under
-  `hypruse__`; strict seat and authentication guards remain enabled. Images are passed directly to
-  the model, with short-lived in-memory preview IDs and retained geometry/scale metadata.
+`assistant/voice/controller.py` owns one microphone session with an ID. Audio remains in memory,
+recording stops after 55 seconds, and release starts transcription. Cancelling or starting another
+session invalidates older work, so a late transcript cannot submit an obsolete request. Hotkeys
+and the native microphone button use this same controller.
 
-### Memory
+The native view treats ordered `voice_state` events and reconnect snapshots as authoritative.
+HTTP acknowledgements do not overwrite newer state. Listening/transcribing both expose Cancel
+voice; tasks expose Stop and resumable checkpoints. The HUD does not take keyboard focus.
 
-- Session context, conversation history, preferences, named memories, and knowledge facts live in a
-  local SQLite database under `assistant/database`.
-- Memory has explicit read, list, delete, entity-delete, and full-forget operations.
-- The database is runtime state and is excluded from Git.
-- Additive `task_runs`, `memory_assertions`, and `response_items_json` storage preserves existing
-  conversations. The review UI labels legacy values with unavailable provenance; corrections keep
-  a supersession chain, and forgetting invalidates queued extraction.
+TTS synthesis uses an ordered queue with generation invalidation. Audio events identify their
+client, generation, sequence, and task. The requesting native or web surface owns playback;
+opening a browser does not take ownership of native speech. The native helper authenticates each
+audio fetch, gives QML a private file URL, and deletes its copy after playback or expiry. Playback
+feedback distinguishes synthesis from actual playing/idle/failed state. Late audio from interrupted
+generations is discarded.
 
-### Codex orchestration
+Native typed replies are silent unless the local `speak_typed` preference is enabled. Native mute
+suppresses playback; reduced motion affects visual feedback. Personal voice identity/rate come
+from environment overrides. Provider failures are errors, never transcription text sent to the agent.
 
-- The UI emits a private `[codex-launch]` envelope containing the workspace, brief, and optional
-  model. The agent parses this locally instead of asking the chat model to relay UI state.
-- `codex_orchestrate` validates the project and model identifiers, creates a directory only beneath
-  `codex_workspace`, removes Thursday's provider credentials from the child environment, and opens
-  a visible Kitty terminal.
-- Codex runs with `workspace-write` and approval expansion disabled. The terminal is interactive and
-  remains the authority for task status; Thursday only confirms that it launched successfully.
-- The included `codex_workspace/todo-app` project is a demonstration artifact. New personal Codex
-  projects are ignored by Git unless intentionally allowlisted.
+## Capability and storage boundaries
 
-## Security model
+Built-in tools are discovered through `assistant/tools/registry.py`. Each declares a function
+schema and implements deterministic execution. Native integrations use Linux interfaces such as
+MPRIS, Hyprland IPC, Thunar, and indexed filename search. The managed Brave Helper uses the normal
+signed-in browser profile; Gmail drafts remain unsent and Calendar writes require confirmation.
 
-Thursday is powerful because it can affect a real desktop. Its controls are layered:
+The Hypruse adapter owns a lazy stdio MCP child in the same virtual environment. It checks packages
+and graphical session access, registers live schemas under `hypruse__`, and exposes sanitized
+readiness details. Window addresses, accessibility names, and screenshot geometry ground actions.
+Strict seat and authentication guards remain enabled. Screenshots are task-driven rather than
+continuous monitoring; bounded preview IDs expire, and raw images stay out of SQLite/model logs.
 
-- The HTTP server binds to loopback by default. Remote binds require an explicit opt-in and a token.
-- Mutating API routes honor the configured bearer token.
-- File tools resolve paths against configured read and write roots.
-- Shell execution applies blacklist, whitelist, timeout, and confirmation policies.
-- Consequential browser actions expose a confirmation step in the web UI.
-- Provider and request errors are translated into public-safe messages; technical details stay in
-  redacted logs.
-- Secrets belong in `.env`, which is excluded from Git. The repository ships only `.env.example`.
+Conversation history, task checkpoints, personal assertions, and named memories share local SQLite
+storage. Corrections retain supersession history; forgetting invalidates queued extraction.
+Forgetting personal memory and deleting conversation history are separate operations.
 
-The default checked-in configuration is tailored to the author's trusted workstation. For another
-machine—especially a shared one—start from `assistant/config/config.safe.example.json` and grant
-capabilities incrementally.
+Codex launch envelopes are parsed locally. The orchestrator validates a contained workspace,
+strips Thursday's provider credentials from the child environment, and opens a visible Kitty
+session with workspace-write restrictions. The interactive terminal remains the authority for
+completion; Thursday confirms only the observed launch.
 
-## Adding a capability
+## Privacy and publication
 
-1. Add a module in `assistant/tools` with precise metadata and a narrow input schema.
-2. Keep side effects inside the tool; never make the model pretend an action occurred.
-3. Add the tool to a group and relevant intent keywords in `assistant/tools/groups.py`.
-4. Apply path, confirmation, authentication, or focus checks appropriate to the action.
-5. Add isolated tests for success, rejection, and failure paths.
-6. Exercise the real integration when static tests cannot prove desktop behavior.
+The server binds to loopback by default; remote exposure requires explicit opt-in and should use
+API authentication. Configured token checks apply to API routes. The native helper accepts only
+loopback URLs, authenticates in headers, disables proxy inheritance and redirects, and never
+writes tokens into QML, process arguments, or query strings.
 
-## Operational checks
+The React connection gate exchanges the configured operator token in an authorization header
+for a signed one-hour session cookie. It is HttpOnly, SameSite=Strict, and scoped to `/api`; the
+operator token is not saved in browser storage. Renewal requires the operator token again.
+Cross-origin mutation checks remain separate from authentication.
+
+`assistant.paths` supplies user-owned `0700` runtime directories and atomic `0600` files. Transient
+speech and captures are separated from persistent conversation storage. The installer tightens
+local `.env`, database, and log permissions and keeps its backups outside the repository. Public
+configuration uses generic identity defaults; credentials and personal overrides live locally.
+
+Logs and diagnostics minimize private content, but local logs, environment files, databases,
+recordings, screenshots, and installation backups remain private artifacts. Publishing uses explicit
+staging and content review. Ignore rules do not retroactively sanitize existing Git history.
+
+## Verification and extension points
 
 ```bash
-python -m pytest assistant/tests/
-python -m ruff check assistant
-cd assistant/web && npm ci && npm run build
+.venv/bin/python -m pytest assistant/tests -q
+.venv/bin/python -m ruff check assistant --select E9,F63,F7,F82
+/usr/lib/qt6/bin/qmllint desktop/quickshell/Thursday.qml desktop/quickshell/NativeButton.qml
+cd assistant/web
+npm ci
+npx tsc --noEmit
+npm run build
 ```
 
-For an installed desktop release, also validate the project and installed `.desktop` entries,
-launch the real application, inspect `/health`, perform a real `/api/message` turn, and confirm that
-closing the last window shuts the managed process down.
+The Qt6 `qmllint` path is distribution-specific. Controlled tests cover transport framing/auth,
+voice ownership, cancellation, approval expiry, replay, private files, installer conflicts, and
+rollback. Rendered native behavior, physical microphone/STT/TTS, provider access, and a real
+Hypruse task require separate live evidence; use the [acceptance scenarios](NATIVE_DESKTOP.md#acceptance-scenarios).
+
+To add a capability, declare its schema/group and narrow execution interface, apply the appropriate
+path/approval/desktop safeguards, and test success, rejection, and interruption. Keep new transient
+artifacts in private runtime storage and preserve task/conversation/client IDs across UI boundaries.
