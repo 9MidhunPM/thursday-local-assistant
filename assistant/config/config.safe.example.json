@@ -36,7 +36,7 @@
   },
   "voice": {
     "tts_enabled": true,
-    "tts_voice": "en-US-EmmaMultilingualNeural",
+    "tts_voice": "en-GB-RyanNeural",
     "tts_rate": "+0%",
     "stt_enabled": true,
     "stt_recognizer": "google",

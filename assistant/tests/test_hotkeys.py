@@ -1,27 +1,22 @@
 """Unit tests for the hotkey daemon's pure combo-tracking logic."""
 
+import io
 import json
+import threading
+from types import SimpleNamespace
+from unittest.mock import patch
 
+import assistant.hotkeys as hotkeys
 from assistant.hotkeys import (
-    CHUNK,
-    INTERIM_MAX_SECONDS,
     KEY_C,
     KEY_LEFTALT,
     KEY_LEFTMETA,
     KEY_RIGHTALT,
     KEY_RIGHTMETA,
-    SAMPLE_RATE,
-    VOICE_HUD_FILE,
     ComboTracker,
-    parse_sse_event,
-    remove_hud_file,
-    reuse_interim_as_final,
-    write_hud_file,
+    KeyboardCombos,
+    VoiceClient,
 )
-
-
-def _frames(seconds: float) -> int:
-    return int(seconds * SAMPLE_RATE / CHUNK)
 
 PRESS, RELEASE, REPEAT = 1, 0, 2
 
@@ -89,70 +84,184 @@ def test_super_alone_does_nothing():
     assert not t.ptt_active
 
 
-# --- SSE parsing -----------------------------------------------------------
+
+def test_modifier_keys_from_separate_keyboards_do_not_form_combo():
+    tracker = KeyboardCombos()
+    assert tracker.handle("one", KEY_LEFTMETA, PRESS) is None
+    assert tracker.handle("two", KEY_LEFTALT, PRESS) is None
+    assert not tracker.active
+    assert tracker.handle("one", KEY_LEFTALT, PRESS) == "ptt_start"
+    assert tracker.handle("two", KEY_LEFTALT, RELEASE) is None
+    assert tracker.active
 
 
-def test_parse_sse_event_token():
-    line = 'data: {"type": "token", "data": {"chunk": "Hello"}, "timestamp": 1.0}'
-    assert parse_sse_event(line) == ("token", {"chunk": "Hello"})
+def test_disconnect_cancels_active_combo_and_reconnect_starts_clean():
+    tracker = KeyboardCombos()
+    tracker.handle("one", KEY_LEFTMETA, PRESS)
+    assert tracker.handle("one", KEY_LEFTALT, PRESS) == "ptt_start"
+    assert tracker.remove("one") == "ptt_cancel"
+    assert not tracker.active
+    assert tracker.handle("one", KEY_LEFTALT, PRESS) is None
+    assert tracker.handle("one", KEY_LEFTMETA, PRESS) == "ptt_start"
 
 
-def test_parse_sse_event_final_response():
-    line = 'data: {"type": "final_response", "data": {"content": "Done"}}'
-    assert parse_sse_event(line) == ("final_response", {"content": "Done"})
+def test_two_complete_combos_keep_one_session_until_both_released():
+    tracker = KeyboardCombos()
+    for device in ("one", "two"):
+        assert tracker.handle(device, KEY_LEFTMETA, PRESS) is None
+        expected = "ptt_start" if device == "one" else None
+        assert tracker.handle(device, KEY_LEFTALT, PRESS) == expected
+    assert tracker.remove("one") is None
+    assert tracker.handle("two", KEY_LEFTALT, RELEASE) == "ptt_stop"
 
 
-def test_parse_sse_event_ignores_pings_and_garbage():
-    assert parse_sse_event(": ping") is None
-    assert parse_sse_event("") is None
-    assert parse_sse_event("data: {not json") is None
-    assert parse_sse_event("data: [1, 2]") is None
-    assert parse_sse_event('data: {"no_type": true}') is None
+def test_missing_dependency_has_nonretryable_exit(monkeypatch):
+    monkeypatch.setattr(hotkeys, "dependency_ready", lambda: False)
+    assert hotkeys.main(["--check"]) == 78
 
 
-# --- HUD state file --------------------------------------------------------
+def test_dependency_check_never_listens(monkeypatch):
+    monkeypatch.setattr(hotkeys, "dependency_ready", lambda: True)
+    with patch.object(hotkeys, "run") as run:
+        assert hotkeys.main(["--check"]) == 0
+        run.assert_not_called()
 
 
-def test_hud_file_roundtrip():
-    try:
-        write_hud_file("answering", transcript="hi thursday", answer="Hello!")
-        data = json.loads(VOICE_HUD_FILE.read_text())
-        assert data["state"] == "answering"
-        assert data["transcript"] == "hi thursday"
-        assert data["answer"] == "Hello!"
-        assert data["updated"] > 0
-    finally:
-        remove_hud_file()
-    assert not VOICE_HUD_FILE.exists()
-
-
-def test_remove_hud_file_idempotent():
-    remove_hud_file()
-    remove_hud_file()  # must not raise
-
-
-# --- Interim reuse (skip slow final re-transcription) ----------------------
-
-
-def test_reuse_interim_when_fresh_and_complete():
-    # 5s hold, interim covered all of it, 0.5s of new audio -> reuse.
-    assert (
-        reuse_interim_as_final("hello there", _frames(4.5), _frames(5.0)) == "hello there"
+def test_module_service_entrypoint_loads_local_auth_and_port(tmp_path, monkeypatch):
+    source = tmp_path / "assistant" / "hotkeys.py"
+    source.parent.mkdir()
+    source.touch()
+    (tmp_path / ".env").write_text(
+        "THURSDAY_API_TOKEN=synthetic-service-token\nTHURSDAY_PORT=5505\n"
     )
+    monkeypatch.setattr(hotkeys, "__file__", str(source))
+    monkeypatch.delenv("THURSDAY_API_TOKEN", raising=False)
+    monkeypatch.delenv("THURSDAY_PORT", raising=False)
+    monkeypatch.setenv("THURSDAY_HOST", "127.0.0.1")
+    monkeypatch.setattr(hotkeys, "dependency_ready", lambda: True)
+    monkeypatch.setattr(hotkeys.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(hotkeys, "run", lambda _stop: VoiceClient().start())
+    with patch.object(hotkeys.request, "urlopen", return_value=io.BytesIO(b"{}")) as opened:
+        assert hotkeys.main([]) == 0
+    req = opened.call_args.args[0]
+    assert req.full_url == "http://127.0.0.1:5505/api/voice/start"
+    assert req.get_header("Authorization") == "Bearer synthetic-service-token"
 
 
-def test_no_reuse_when_new_audio_after_interim():
-    # 2.5s of speech arrived after the last interim -> must re-transcribe.
-    assert reuse_interim_as_final("hello", _frames(2.5), _frames(5.0)) is None
+def test_voice_client_auth_and_session_specific_commands(monkeypatch):
+    monkeypatch.setenv("THURSDAY_API_TOKEN", "synthetic-only")
+    calls = []
+
+    def reply(req, timeout):
+        calls.append((req, timeout))
+        return io.BytesIO(json.dumps({"session_id": "session-1", "state": "listening"}).encode())
+
+    with patch.object(hotkeys.request, "urlopen", side_effect=reply):
+        client = VoiceClient()
+        client.start()
+        client.stop()
+        client.stop()
+    assert len(calls) == 2
+    assert calls[0][0].full_url.endswith("/api/voice/start")
+    assert calls[0][0].get_header("Authorization") == "Bearer synthetic-only"
+    assert json.loads(calls[1][0].data) == {"session_id": "session-1"}
+    assert calls[1][0].full_url.endswith("/api/voice/stop")
 
 
-def test_no_reuse_when_hold_exceeds_interim_window():
-    # 30s hold: interim only saw the tail -> full transcribe required.
-    mark = _frames(29.0)
-    total = _frames(30.0)
-    assert total > _frames(INTERIM_MAX_SECONDS)
-    assert reuse_interim_as_final("tail only", mark, total) is None
+def test_client_does_not_cancel_a_session_it_did_not_start():
+    client = VoiceClient()
+    with patch.object(client, "_post") as post:
+        client.stop()
+        client.cancel()
+        post.assert_not_called()
 
 
-def test_no_reuse_without_interim():
-    assert reuse_interim_as_final("", 0, _frames(3.0)) is None
+def test_backend_error_body_is_not_logged(caplog):
+    response = hotkeys.error.HTTPError(
+        "http://127.0.0.1", 401, "Unauthorized", {}, io.BytesIO(b"secret-provider-data")
+    )
+    with patch.object(hotkeys.request, "urlopen", side_effect=response):
+        VoiceClient().start()
+    assert "HTTP 401" in caplog.text
+    assert "secret-provider-data" not in caplog.text
+
+
+def test_run_rediscovers_keyboard_and_cancels_on_disconnect(monkeypatch):
+    stopped = threading.Event()
+    actions = []
+
+    def ev(code, value):
+        return SimpleNamespace(type=hotkeys.EV_KEY, code=code, value=value)
+
+    class Device:
+        path = "synthetic-keyboard"
+        closed = False
+
+        def __init__(self, reads):
+            self.reads = iter(reads)
+
+        def read(self):
+            result = next(self.reads)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        def close(self):
+            self.closed = True
+
+    first = Device([[ev(KEY_LEFTMETA, PRESS), ev(KEY_LEFTALT, PRESS)], OSError()])
+    second = Device([
+        [ev(KEY_LEFTMETA, PRESS), ev(KEY_LEFTALT, PRESS)], [ev(KEY_LEFTALT, RELEASE)]
+    ])
+    available = iter([first, second])
+
+    def discover(existing):
+        if not existing:
+            yield next(available)
+
+    class Selector:
+        device = None
+        calls = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def register(self, dev, _events):
+            self.device = dev
+
+        def unregister(self, _dev):
+            self.device = None
+
+        def select(self, timeout):
+            assert timeout <= 1
+            self.calls += 1
+            if self.calls > 4:
+                stopped.set()
+                return []
+            return [(SimpleNamespace(fileobj=self.device), None)]
+
+    class Client:
+        def start(self):
+            actions.append("start")
+
+        def stop(self):
+            actions.append("stop")
+
+        def cancel(self):
+            actions.append("cancel")
+
+    ticks = iter(range(0, 20, 2))
+    monkeypatch.setitem(hotkeys.sys.modules, "evdev", SimpleNamespace(
+        ecodes=SimpleNamespace(EV_KEY=hotkeys.EV_KEY)
+    ))
+    monkeypatch.setattr(hotkeys.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(hotkeys, "find_keyboards", discover)
+    monkeypatch.setattr(hotkeys.selectors, "DefaultSelector", Selector)
+    monkeypatch.setattr(hotkeys, "VoiceClient", Client)
+    hotkeys.run(stopped)
+    assert actions == ["start", "cancel", "start", "stop", "cancel"]
+    assert first.closed
+    assert second.closed

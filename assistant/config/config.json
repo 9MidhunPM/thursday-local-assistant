@@ -69,8 +69,8 @@
   },
   "voice": {
     "tts_enabled": true,
-    "tts_voice": "en-US-EmmaMultilingualNeural",
-    "tts_rate": "+25%",
+    "tts_voice": "en-GB-RyanNeural",
+    "tts_rate": "+0%",
     "stt_enabled": true,
     "stt_recognizer": "google",
     "stt_language": "en-US"
@@ -80,7 +80,7 @@
     "level": "INFO"
   },
   "agent": {
-    "user_name": "Midhun P M",
+    "user_name": "User",
     "max_tool_steps": 24,
     "max_parallel_tools": 4,
     "auto_extract": true,
