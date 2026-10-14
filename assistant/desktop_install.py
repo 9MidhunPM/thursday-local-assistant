@@ -82,6 +82,14 @@ def _quoted_systemd(path):
     )
 
 
+def _systemd_directory(path):
+    """WorkingDirectory is a literal path, not an ExecStart argument."""
+    value = str(path)
+    if not Path(value).is_absolute() or any(character in value for character in "\n\r\0"):
+        raise InstallError("unsafe_path")
+    return value.replace("%", "%%")
+
+
 def _without_block(text, label, comment):
     begin, end = f"{comment} BEGIN THURSDAY {label}", f"{comment} END THURSDAY {label}"
     if text.count(begin) != text.count(end) or text.count(begin) > 1:
@@ -241,7 +249,7 @@ class DesktopInstaller:
             "end)\n-- END THURSDAY SESSION\n"
         )
         substitutions = {
-            "@REPO_SYSTEMD@": _quoted_systemd(self.repo),
+            "@DIRECTORY_SYSTEMD@": _systemd_directory(self.repo),
             "@PYTHON_SYSTEMD@": _quoted_systemd(self.repo / ".venv/bin/python3"),
         }
         changes = []

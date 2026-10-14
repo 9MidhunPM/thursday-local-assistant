@@ -4,12 +4,13 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from assistant.desktop_install import DesktopInstaller, InstallError
+from assistant.desktop_install import DesktopInstaller, InstallError, _systemd_directory
 
 _SHELL = """//@ pragma UseQApplication
 import Quickshell
@@ -52,7 +53,7 @@ def desktop(tmp_path):
     templates = Path(__file__).resolve().parents[2] / "desktop/templates"
     shutil.copytree(templates, repo / "desktop/templates")
     for relative, text in {
-        ".venv/bin/python3": "fixture interpreter\n",
+        ".venv/bin/python3": "#!/bin/sh\nexit 0\n",
         "desktop/quickshell/Thursday.qml": "import QtQuick\nItem {}\n",
         ".env": "SYNTHETIC_PRIVATE_VALUE=keep-me\n",
         "assistant/database/memory.db": "synthetic-private-memory",
@@ -63,6 +64,7 @@ def desktop(tmp_path):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text)
         target.chmod(0o644)
+    (repo / ".venv/bin/python3").chmod(0o755)
     originals = {
         "quickshell/shell.qml": _SHELL,
         "quickshell/Bar.qml": (
@@ -174,7 +176,7 @@ def test_units_and_default_start_use_supervision_and_only_allowlisted_environmen
         assert "RestartPreventExitStatus=78" in unit
         assert "StartLimitBurst=3" in unit
         assert "WantedBy=graphical-session.target" in unit
-        assert f'WorkingDirectory="{desktop.repo}"' in unit
+        assert f"WorkingDirectory={desktop.repo}" in unit
     assert "-m assistant.main --web --no-browser" in backend
     assert "Requires=thursday.service" in hotkeys
     assert "-m assistant.hotkeys" in hotkeys
@@ -188,6 +190,38 @@ def test_units_and_default_start_use_supervision_and_only_allowlisted_environmen
     assert '"thursday", "toggle"' in button
     assert "XMLHttpRequest" not in button
     assert "5005" not in button
+
+
+def test_generated_units_are_accepted_by_systemd_with_spaces_in_repo_path(desktop):
+    analyzer = shutil.which("systemd-analyze")
+    if not analyzer:
+        pytest.skip("systemd-analyze is unavailable on this platform")
+    desktop.installer.install(no_start=True)
+    runtime = desktop.base / "runtime"
+    runtime.mkdir(mode=0o700)
+    result = subprocess.run(
+        [
+            analyzer,
+            "--user",
+            "--generators=no",
+            "verify",
+            str(desktop.config / "systemd/user/thursday.service"),
+            str(desktop.config / "systemd/user/thursday-hotkeys.service"),
+        ],
+        env={**os.environ, "XDG_RUNTIME_DIR": str(runtime), "XDG_CONFIG_HOME": str(desktop.config)},
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "WorkingDirectory" not in result.stderr
+
+
+def test_systemd_directory_escapes_specifiers_and_refuses_line_injection():
+    assert _systemd_directory(Path("/tmp/checkout with % sign")) == "/tmp/checkout with %% sign"
+    with pytest.raises(InstallError, match="unsafe_path"):
+        _systemd_directory(Path("/tmp/checkout\nExecStart=/bin/false"))
 
 
 def test_uninstall_restores_originals_and_removes_only_generated_files(desktop):

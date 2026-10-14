@@ -7,7 +7,7 @@ StartLimitBurst=3
 
 [Service]
 Type=simple
-WorkingDirectory=@REPO_SYSTEMD@
+WorkingDirectory=@DIRECTORY_SYSTEMD@
 ExecStart=@PYTHON_SYSTEMD@ -m assistant.main --web --no-browser
 UMask=0077
 Restart=on-failure
