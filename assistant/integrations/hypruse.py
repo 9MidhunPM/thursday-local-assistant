@@ -9,6 +9,7 @@ import base64
 import concurrent.futures
 import contextlib
 import copy
+import importlib.util
 import json
 import os
 import re
@@ -81,18 +82,132 @@ class CaptureCache:
 captures = CaptureCache()
 
 
+_ERROR_MESSAGES = {
+    "missing_dependencies": (
+        "Desktop control needs Thursday's Hypruse extra. Run the desktop installer or install "
+        ".[hypruse] into Thursday's virtual environment, then restart."
+    ),
+    "missing_session": (
+        "Desktop control needs a live Hyprland session. "
+        "Start Thursday through its graphical-session service."
+    ),
+    "startup_timeout": (
+        "Desktop control did not start in time. Check the desktop service, "
+        "then request a fresh desktop observation."
+    ),
+    "startup_failed": (
+        "Desktop control could not start. Check its installation and graphical-session service, "
+        "then request a fresh desktop observation."
+    ),
+    "connection_lost": (
+        "The desktop connection closed. Request a fresh desktop observation before continuing."
+    ),
+    "call_timeout": "The desktop request timed out. Observe the desktop before retrying an action.",
+    "observation_required": (
+        "Read hypruse__desktop to reconnect before requesting another desktop action."
+    ),
+    "closed": "Desktop control was stopped. Request a fresh desktop observation to reconnect.",
+}
+
+
+class HypruseConnectionError(RuntimeError):
+    """A safe public error; raw transport errors may contain private desktop data."""
+
+    def __init__(self, code, *, delivered=False):
+        self.error_code = code
+        self.delivery = "uncertain_delivery" if delivered else "not_delivered"
+        super().__init__(_ERROR_MESSAGES[code])
+
+
 class HypruseBridge:
-    def __init__(self, registry):
+    def __init__(self, registry, *, startup_timeout=15, call_timeout=30):
         self.registry = registry
+        self.startup_timeout = startup_timeout
+        self.call_timeout = call_timeout
         self._thread = None
         self._ready = threading.Event()
+        self._closing = threading.Event()
         self._error = None
+        self._error_code = None
+        self._abort_code = None
+        self._state = "idle"
+        self._state_lock = threading.Lock()
         self._schemas = []
         self._start_lock = threading.Lock()
+        self._lifecycle_lock = threading.Lock()
+        self._pending = {}
+        self._pending_lock = threading.Lock()
         self.snapshot = None
         self.snapshot_at = 0
 
+    @staticmethod
+    def _dependencies():
+        return {name: importlib.util.find_spec(name) is not None for name in ("mcp", "hypruse")}
+
+    @staticmethod
+    def _session_present():
+        return all(os.environ.get(key) for key in (
+            "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS",
+            "HYPRLAND_INSTANCE_SIGNATURE",
+        ))
+
+    def _set_state(self, state, code=None):
+        with self._state_lock:
+            self._state = state
+            self._error_code = code
+            self._error = _ERROR_MESSAGES.get(code)
+
+    def status(self):
+        """Inspect readiness without connecting or exposing private session data."""
+        dependencies = self._dependencies()
+        session_present = self._session_present()
+        with self._state_lock:
+            state, code = self._state, self._error_code
+        if state == "idle":
+            if not all(dependencies.values()):
+                state, code = "unavailable", "missing_dependencies"
+            elif not session_present:
+                state, code = "unavailable", "missing_session"
+        return {
+            "state": state,
+            "error_code": code,
+            "message": _ERROR_MESSAGES.get(code, "Desktop control is ready." if state == "ready"
+                                            else "Desktop control connects when requested."),
+            "dependencies": dependencies,
+            "session_present": session_present,
+        }
+
+    def _preflight(self):
+        if not all(self._dependencies().values()):
+            raise HypruseConnectionError("missing_dependencies")
+        if not self._session_present():
+            raise HypruseConnectionError("missing_session")
+
+    def _finish(self, future, *, result=None, error=None):
+        with self._pending_lock:
+            if future not in self._pending:
+                return
+            self._pending.pop(future, None)
+        if not future.done():
+            if error:
+                future.set_exception(error)
+            else:
+                future.set_result(result)
+
+    def _fail_pending(self, code):
+        with self._pending_lock:
+            pending, self._pending = self._pending, {}
+        for future, delivered in pending.items():
+            if not future.done():
+                future.set_exception(HypruseConnectionError(code, delivered=delivered))
+
     async def _serve(self):
+        self._loop = asyncio.get_running_loop()
+        self._runner = asyncio.current_task()
+        self._queue = asyncio.Queue()
+        self._transport_closed = asyncio.Event()
+        if self._closing.is_set():
+            raise HypruseConnectionError("closed")
         from mcp import ClientSession  # noqa: PLC0415 - optional dependency, lazy connection
 
         # Keep only graphical-session variables; the MCP child never needs
@@ -110,26 +225,57 @@ class HypruseBridge:
             HYPRUSE_AUTH_GUARD="strict",
             HYPRUSE_CLIPBOARD="0",
         )
-        self._loop = asyncio.get_running_loop()
-        self._queue = asyncio.Queue()
-        async with self._stdio(env) as streams:
-            async with ClientSession(*streams) as session:
-                await session.initialize()
-                listing = await session.list_tools()
-                self._schemas = [tool for tool in listing.tools if tool.name in ALLOWED]
-                self._ready.set()
-                while True:
-                    item = await self._queue.get()
-                    if item is None:
-                        break
-                    name, arguments, future = item
+        async with contextlib.AsyncExitStack() as stack:
+            try:
+                async with asyncio.timeout(self.startup_timeout):
+                    streams = await stack.enter_async_context(self._stdio(env))
+                    session = await stack.enter_async_context(ClientSession(*streams))
+                    await session.initialize()
+                    listing = await session.list_tools()
+            except TimeoutError:
+                raise HypruseConnectionError("startup_timeout") from None
+            if self._closing.is_set():
+                raise HypruseConnectionError("closed")
+            self._schemas = [tool for tool in listing.tools if tool.name in ALLOWED]
+            self._set_state("ready")
+            self._ready.set()
+            disconnected = asyncio.create_task(self._transport_closed.wait())
+            try:
+                while not self._closing.is_set():
+                    request = asyncio.create_task(self._queue.get())
                     try:
-                        result = await asyncio.wait_for(session.call_tool(name, arguments), 30)
-                        if not future.done():
-                            future.set_result(result.model_dump(by_alias=True))
-                    except Exception as exc:
-                        if not future.done():
-                            future.set_exception(exc)
+                        done, _ = await asyncio.wait(
+                            (request, disconnected), return_when=asyncio.FIRST_COMPLETED
+                        )
+                        if disconnected in done:
+                            raise HypruseConnectionError("connection_lost")
+                        name, arguments, future = request.result()
+                    finally:
+                        request.cancel()
+                        await asyncio.gather(request, return_exceptions=True)
+                    with self._pending_lock:
+                        if future not in self._pending:
+                            continue
+                        # Once submitted, a failed mutation must never be replayed.
+                        self._pending[future] = name not in OBSERVATIONS
+                    operation = asyncio.create_task(session.call_tool(name, arguments))
+                    try:
+                        done, _ = await asyncio.wait(
+                            (operation, disconnected), timeout=self.call_timeout,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if disconnected in done:
+                            raise HypruseConnectionError("connection_lost")
+                        if operation not in done:
+                            raise HypruseConnectionError("call_timeout")
+                        result = operation.result()
+                        self._finish(future, result=result.model_dump(by_alias=True))
+                    finally:
+                        operation.cancel()
+                        await asyncio.gather(operation, return_exceptions=True)
+            finally:
+                disconnected.cancel()
+                await asyncio.gather(disconnected, return_exceptions=True)
 
     @contextlib.asynccontextmanager
     async def _stdio(self, env):
@@ -154,23 +300,26 @@ class HypruseBridge:
         write_send, write_receive = anyio.create_memory_object_stream(0)
 
         async def reader():
-            async with read_send:
-                while line := await process.stdout.readline():
-                    try:
-                        message = SessionMessage(JSONRPCMessage.model_validate_json(line))
-                    except ValueError as exc:
-                        message = exc
-                    await read_send.send(message)
+            try:
+                async with read_send:
+                    while line := await process.stdout.readline():
+                        try:
+                            message = SessionMessage(JSONRPCMessage.model_validate_json(line))
+                        except ValueError as exc:
+                            message = exc
+                        await read_send.send(message)
+            finally:
+                self._transport_closed.set()
 
         async def writer():
-            async with write_receive:
-                async for item in write_receive:
-                    process.stdin.write(
-                        (
-                            item.message.model_dump_json(by_alias=True, exclude_none=True) + "\n"
-                        ).encode()
-                    )
-                    await process.stdin.drain()
+            try:
+                async with write_receive:
+                    async for item in write_receive:
+                        encoded = item.message.model_dump_json(by_alias=True, exclude_none=True)
+                        process.stdin.write((encoded + "\n").encode())
+                        await process.stdin.drain()
+            finally:
+                self._transport_closed.set()
 
         tasks = [asyncio.create_task(reader()), asyncio.create_task(writer())]
         try:
@@ -189,59 +338,105 @@ class HypruseBridge:
             await read_receive.aclose()
             await write_send.aclose()
 
+    def _failure_code(self, exc):
+        if isinstance(exc, HypruseConnectionError):
+            return exc.error_code
+        if isinstance(exc, BaseExceptionGroup):
+            for nested in exc.exceptions:
+                code = self._failure_code(nested)
+                if code not in {"startup_failed", "connection_lost"}:
+                    return code
+        return "connection_lost" if self._state == "ready" else "startup_failed"
+
     def _worker(self):
+        code = "closed"
         try:
             asyncio.run(self._serve())
-        except Exception as exc:
-            self._error = str(exc)
+        except (Exception, asyncio.CancelledError) as exc:
+            code = "closed" if self._closing.is_set() else (
+                self._abort_code or self._failure_code(exc)
+            )
         finally:
+            self.snapshot, self.snapshot_at = None, 0
+            self._set_state("closed" if self._closing.is_set() else "unavailable", code)
+            self._fail_pending(code)
             self._ready.set()
 
     def connect(self):
         with self._start_lock:
+            if self._thread and self._state in {"unavailable", "closed"}:
+                self._thread.join(3)
             if self._thread is None or not self._thread.is_alive():
-                self.snapshot, self.snapshot_at = None, 0
-                self._error = None
-                self._ready.clear()
-                self._thread = threading.Thread(
-                    target=self._worker, daemon=True, name="thursday-hypruse"
-                )
-                self._thread.start()
-            if not self._ready.wait(20) or self._error:
-                raise RuntimeError(
-                    "Hypruse unavailable. Install Thursday's hypruse extra "
-                    "and check the graphical session."
-                )
+                with self._lifecycle_lock:
+                    self.snapshot, self.snapshot_at = None, 0
+                    try:
+                        self._preflight()
+                    except HypruseConnectionError as exc:
+                        self._set_state("unavailable", exc.error_code)
+                        raise
+                    self._schemas = []
+                    self._abort_code = None
+                    self._closing.clear()
+                    self._set_state("connecting")
+                    self._ready.clear()
+                    self._thread = threading.Thread(
+                        target=self._worker, daemon=True, name="thursday-hypruse"
+                    )
+                    self._thread.start()
+            if not self._ready.wait(self.startup_timeout + 4):
+                self._cancel_worker("startup_timeout")
+                self._set_state("unavailable", "startup_timeout")
+                raise HypruseConnectionError("startup_timeout")
+            if self._state != "ready" or not self._thread.is_alive():
+                raise HypruseConnectionError(self._error_code or "startup_failed")
             for schema in self._schemas:
                 self.registry.register(
                     HypruseTool(self, schema.name, schema.description or "", schema.inputSchema)
                 )
 
     def call(self, name, arguments):
+        if name not in OBSERVATIONS and self._state != "ready":
+            raise HypruseConnectionError("observation_required")
         self.connect()
         future = concurrent.futures.Future()
-        asyncio.run_coroutine_threadsafe(
-            self._queue.put((name, arguments, future)), self._loop
-        ).result(2)
-        try:
-            return future.result(35)
-        except TimeoutError as exc:
-            # Unknown delivery outcome: never retry automatically.
-            raise RuntimeError(
-                "Hypruse timed out; delivery is uncertain. Observe before retrying."
-            ) from exc
+        with self._pending_lock:
+            self._pending[future] = False
 
-    def close(self):
-        self.snapshot, self.snapshot_at = None, 0
-        if self._thread and self._thread.is_alive() and hasattr(self, "_queue"):
-            try:
-                process = getattr(self, "_process", None)
-                if process and process.returncode is None:
-                    self._loop.call_soon_threadsafe(process.terminate)
-                asyncio.run_coroutine_threadsafe(self._queue.put(None), self._loop).result(2)
-                self._thread.join(3)
-            except (RuntimeError, TimeoutError):
-                pass
+        def enqueue():
+            if self._state != "ready" or self._closing.is_set():
+                self._finish(future, error=HypruseConnectionError("connection_lost"))
+            else:
+                self._queue.put_nowait((name, arguments, future))
+
+        try:
+            self._loop.call_soon_threadsafe(enqueue)
+        except RuntimeError:
+            self._finish(future, error=HypruseConnectionError("connection_lost"))
+        try:
+            return future.result(self.call_timeout + 5)
+        except TimeoutError:
+            self._cancel_worker("call_timeout")
+            self._fail_pending("call_timeout")
+            return future.result()
+
+    def _cancel_worker(self, code="closed"):
+        self._abort_code = code
+        loop, runner = getattr(self, "_loop", None), getattr(self, "_runner", None)
+        if loop and runner and not loop.is_closed():
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(runner.cancel)
+
+    def close(self, *, wait=True):
+        """Signal cancellation now; optionally wait for the owned process to exit."""
+        with self._lifecycle_lock:
+            self.snapshot, self.snapshot_at = None, 0
+            self._closing.set()
+            self._set_state("closed", "closed")
+            self._fail_pending("closed")
+            self._cancel_worker()
+            thread = self._thread
+        if wait and thread and thread is not threading.current_thread():
+            thread.join(3)
         captures.clear()
 
 
@@ -486,12 +681,28 @@ class HypruseTool(BaseTool):
             )
         try:
             raw = self.bridge.call(self.operation, args)
-        except Exception as exc:
+        except HypruseConnectionError as exc:
+            uncertain = exc.delivery == "uncertain_delivery"
             return {
                 "success": False,
                 "error": str(exc),
+                "error_code": exc.error_code,
+                "delivery": exc.delivery,
                 "pause": True,
-                "verification": "Delivery is uncertain; re-observe before retrying.",
+                "verification": "Delivery is uncertain; re-observe before retrying."
+                if uncertain else "The requested desktop operation was not delivered.",
+            }
+        except Exception:
+            return {
+                "success": False,
+                "error": _ERROR_MESSAGES["connection_lost"],
+                "error_code": "connection_lost",
+                "delivery": "not_delivered" if self.operation in OBSERVATIONS
+                else "uncertain_delivery",
+                "pause": True,
+                "verification": "The desktop observation failed."
+                if self.operation in OBSERVATIONS
+                else "Delivery is uncertain; re-observe before retrying.",
             }
         if raw.get("isError"):
             error = " ".join(p.get("text", "") for p in raw.get("content", []))
