@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Mark from 'mark.js'
+import { reportPlayback } from '@/lib/client'
 
 interface QueueItem {
   buffer: AudioBuffer
   text: string
+  generationId?: string
 }
 
 export function useAudioEngine() {
@@ -12,6 +14,8 @@ export function useAudioEngine() {
   const sourceRef = useRef<AudioBufferSourceNode | null>(null)
   const queueRef = useRef<QueueItem[]>([])
   const isPlayingRef = useRef(false)
+  const epochRef = useRef(0)
+  const fetchChainRef = useRef<Promise<void>>(Promise.resolve())
   const markInstanceRef = useRef<Mark | null>(null)
   const lastAgentContentRef = useRef<HTMLElement | null>(null)
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -115,45 +119,59 @@ export function useAudioEngine() {
     }
 
     source.onended = () => {
-      if (sourceRef.current === source) sourceRef.current = null
+      if (sourceRef.current !== source) return
+      sourceRef.current = null
       isPlayingRef.current = false
       if (queueRef.current.length > 0) {
         playNextAudio()
       } else {
         stopVisualizer()
         clearHighlight()
+        if (item.generationId) reportPlayback(item.generationId, 'idle')
       }
     }
 
     source.start(0)
+    if (item.generationId) reportPlayback(item.generationId, 'playing')
   }, [clearHighlight, stopVisualizer])
 
   const queueAudio = useCallback(
-    async (url: string, text: string) => {
-      initAudio()
-      setIsPreparing(true)
-      try {
-        const response = await fetch(url)
-        if (!response.ok) throw new Error('Failed to fetch audio')
-        const arrayBuffer = await response.arrayBuffer()
-        const ctx = audioCtxRef.current
-        if (!ctx) {
+    (url: string, text: string, generationId?: string) => {
+      const epoch = epochRef.current
+      const work = async () => {
+        if (epoch !== epochRef.current) return
+        initAudio()
+        setIsPreparing(true)
+        try {
+          const response = await fetch(url)
+          if (!response.ok) throw new Error('Failed to fetch audio')
+          const arrayBuffer = await response.arrayBuffer()
+          const ctx = audioCtxRef.current
+          if (!ctx) {
+            setIsPreparing(false)
+            return
+          }
+          const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
+          if (epoch !== epochRef.current) return
+          queueRef.current.push({ buffer: audioBuffer, text, generationId })
           setIsPreparing(false)
-          return
+          playNextAudio()
+        } catch (err) {
+          if (epoch !== epochRef.current) return
+          setIsPreparing(false)
+          console.error('Audio playback error:', err)
+          if (generationId) reportPlayback(generationId, 'failed')
         }
-        const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
-        queueRef.current.push({ buffer: audioBuffer, text })
-        setIsPreparing(false)
-        playNextAudio()
-      } catch (err) {
-        setIsPreparing(false)
-        console.error('Audio playback error:', err)
       }
+      fetchChainRef.current = fetchChainRef.current.then(work, work)
+      return fetchChainRef.current
     },
     [initAudio, playNextAudio],
   )
 
   const stopAll = useCallback(() => {
+    epochRef.current += 1
+    fetchChainRef.current = Promise.resolve()
     queueRef.current = []
     if (sourceRef.current) {
       try {
@@ -181,6 +199,8 @@ export function useAudioEngine() {
 
   useEffect(() => {
     return () => {
+      epochRef.current += 1
+      queueRef.current = []
       if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
       if (sourceRef.current) {
         try {
@@ -206,6 +226,7 @@ export function useAudioEngine() {
     stopVisualizer,
     ensureAudio,
     prepareAudio,
+    finishPreparing: () => setIsPreparing(false),
     registerAgentContent,
   }
 }

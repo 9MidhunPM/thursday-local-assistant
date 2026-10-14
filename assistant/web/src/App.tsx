@@ -15,7 +15,9 @@ import { useHealth } from '@/hooks/useHealth'
 import { chatReducer, initialState } from '@/state/chatReducer'
 import TaskPanel from '@/components/TaskPanel'
 import MemoryReview from '@/components/MemoryReview'
+import ConnectionGate from '@/components/ConnectionGate'
 import type { HistoryMessage, TaskState } from '@/types'
+import { clientId } from '@/lib/client'
 
 const TTS_STORAGE_KEY = 'ttsEnabled'
 
@@ -61,8 +63,9 @@ export default function App() {
     onTaskUpdate: (next) => { if (!next || next.conversation_id === conversations.activeId) setTask(next) },
     dispatch,
     onTtsPreparing: () => audio.prepareAudio(),
-    onTtsAudio: (url, text) => audio.queueAudio(url, text),
-    onTtsStop: () => {},
+    onTtsAudio: (url, text, generation) => audio.queueAudio(url, text, generation),
+    onTtsStop: () => audio.stopAll(),
+    onTtsSynthesisDone: () => audio.finishPreparing(),
     onStopVisualizer: () => audio.stopVisualizer(),
     onInitConversation: (id) => conversations.setActiveId(id),
     onConversationUpdated: () => {
@@ -101,6 +104,7 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             prompt,
+            client_id: clientId,
             tts: ttsEnabled,
             conversation_id: conversations.activeId,
           }),
@@ -140,6 +144,8 @@ export default function App() {
   )
 
   const busy = state.status === 'busy'
+
+  if (health.authRequired) return <ConnectionGate />
 
   return (
     <MotionConfig reducedMotion="user">

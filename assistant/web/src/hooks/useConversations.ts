@@ -31,6 +31,9 @@ export function useConversations(
     try {
       const list = await api<ConversationSummary[]>('/api/conversations')
       setConversations(list)
+    } catch {
+      // Initial access may require a local token, or the service may be
+      // reconnecting. ConnectionGate handles authentication; keep prior data.
     } finally {
       setLoading(false)
     }

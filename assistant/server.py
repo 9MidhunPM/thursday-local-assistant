@@ -534,6 +534,12 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.flush()
 
                 while True:
+                    # A long-lived browser stream cannot outlive its signed
+                    # session. Native bearer clients retain their own lifetime.
+                    if not check_request_auth(
+                        self._headers_dict(), (params.get("token") or [None])[0]
+                    ):
+                        break
                     try:
                         # Periodically timeout to check if client socket has closed
                         event = q.get(timeout=2.0)
