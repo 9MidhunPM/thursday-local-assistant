@@ -553,7 +553,7 @@ Scope {
                         }
                         Text {
                             width: parent.width
-                            text: "Hold Super + Alt to talk.\nAlt + Space opens this conversation."
+                            text: "Hold Super + Alt to talk.\nAlt + Space opens or closes this conversation."
                             font.pixelSize: 12; color: root.secondary
                             wrapMode: Text.WordWrap; lineHeight: 1.4
                         }

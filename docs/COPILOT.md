@@ -140,7 +140,7 @@ Rerun deliberately: `--live` makes paid requests, and fixtures do not touch the 
 
 ## Verification and limits
 
-The native integration baseline has 271 passing Python tests, with one known dependency `aifc`
+The native integration baseline has 272 passing Python tests, with one known dependency `aifc`
 deprecation warning. Controlled coverage includes Responses replay, tool validation, checkpoints,
 memory correction/deletion, guarded desktop approval, fragmented SSE, authentication, voice
 ownership, speech ordering/interruption, and installer rollback conflicts. The Vite 7.3.7 production

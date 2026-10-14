@@ -83,7 +83,7 @@ your usual shell lifecycle. The module does not start an unrelated replacement s
 | Input | Result |
 | --- | --- |
 | Super + C | Toggle chat |
-| Alt + Space | Open chat and focus its composer |
+| Alt + Space | Toggle chat; focus its composer when opening |
 | Hold Super + Alt | Start recording; releasing either modifier ends the recording |
 | Microphone button | Start or finish a recording without holding a shortcut |
 | Cancel voice | Cancel recording or transcription |
@@ -195,7 +195,7 @@ A model/voice change does not require deleting databases or uninstalling the com
 
 ## Acceptance scenarios
 
-The checked development baseline has 271 passing Python tests, one known dependency `aifc`
+The checked development baseline has 272 passing Python tests, one known dependency `aifc`
 deprecation warning, a passing Vite 7.3.7 build, and zero findings in the checked npm audit.
 Controlled tests cover fragmented SSE, token headers, speech ordering/interruption, expired
 approvals, microphone state ownership, dependency failures, installer conflicts, and rollback.

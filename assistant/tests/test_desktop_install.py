@@ -127,6 +127,15 @@ def test_dry_run_has_no_filesystem_or_service_mutations(desktop):
     assert not desktop.runner.calls
 
 
+def test_alt_space_installs_a_repeatable_chat_toggle(desktop):
+    expected = 'hl.bind("ALT + SPACE", hl.dsp.exec_cmd("qs ipc call thursday toggle"))'
+    for _ in range(2):
+        desktop.installer.install(no_start=True)
+        bindings = (desktop.config / "hypr/config/keybinds.lua").read_text()
+        assert expected in bindings
+        assert bindings.count('hl.bind("ALT + SPACE"') == 1
+
+
 def test_install_is_surgical_private_and_repeatable(desktop):
     desktop.installer.install(no_start=True)
     shell = (desktop.config / "quickshell/shell.qml").read_text()
@@ -142,7 +151,7 @@ def test_install_is_surgical_private_and_repeatable(desktop):
         if "SHIFT_R" in line or "brave" in line:
             assert line in bindings
     assert '"qs ipc call thursday toggle"' in bindings
-    assert '"qs ipc call thursday focus"' in bindings
+    assert 'hl.bind("ALT + SPACE", hl.dsp.exec_cmd("qs ipc call thursday toggle"))' in bindings
     startup = (desktop.config / "hypr/config/autostart.lua").read_text()
     assert desktop.originals["hypr/config/autostart.lua"] in startup
     assert startup.count("BEGIN THURSDAY SESSION") == 1

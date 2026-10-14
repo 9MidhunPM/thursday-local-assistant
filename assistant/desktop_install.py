@@ -132,7 +132,7 @@ def _shell(text, repo, *, theme=False):
 def _keybinds(text):
     selectors = (
         (r'(?:mainMod\s*\.\.\s*"\s*\+\s*C"|"SUPER\s*\+\s*C")', "toggle"),
-        (r'"ALT\s*\+\s*SPACE"', "focus"),
+        (r'"ALT\s*\+\s*SPACE"', "toggle"),
     )
     for selector, action in selectors:
         pattern = (

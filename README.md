@@ -127,7 +127,7 @@ cover the exact layout, service commands, and safe uninstall procedure.
 | Shortcut | Action |
 | --- | --- |
 | **Super + C** | Toggle native chat |
-| **Alt + Space** | Open and focus native chat |
+| **Alt + Space** | Toggle native chat; focus the composer when opening |
 | **Super + Alt**, held | Record; release to transcribe and submit |
 
 A recording stops automatically after 55 seconds. The HUD does not take keyboard focus.
@@ -212,7 +212,7 @@ npm run build
 npm audit
 ```
 
-The native desktop verification baseline is **271 passing Python tests**, with one known
+The native desktop verification baseline is **272 passing Python tests**, with one known
 `aifc` deprecation warning from a dependency. The Vite 7.3.7 production build passes and the
 checked dependency audit reports zero vulnerabilities. This baseline covers controlled fixtures;
 it does not establish successful microphone transcription or spoken playback on every machine.
