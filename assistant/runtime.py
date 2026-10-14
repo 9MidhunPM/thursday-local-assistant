@@ -9,6 +9,7 @@ from .agent.agent import Agent, AgentConfig
 from .config import AppConfig, load_config
 from .llm.client import LlamaCppClient, build_llm_client
 from .logging_utils import Loggers, setup_logging
+from .paths import private_dir
 from .memory.conversation_store import ConversationStore
 from .memory.long_term import LongTermMemory
 from .memory.session import SessionMemory
@@ -79,10 +80,11 @@ class AssistantRuntime:
 
 def build_runtime(config_path: Path | None = None) -> AssistantRuntime:
     # Load environment variables from .env file
-    load_dotenv()
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
     resolved_config_path = config_path or default_config_path()
     config = load_config(resolved_config_path)
+    private_dir(Path(config.memory.db_path).parent)
     loggers = setup_logging(Path(config.logging.directory), config.logging.level)
 
     llm = build_llm_client(
@@ -110,6 +112,7 @@ def build_runtime(config_path: Path | None = None) -> AssistantRuntime:
         tool_registry.register(HypruseTool(bridge))
     memory = LongTermMemory(Path(config.memory.db_path))
     conversation_store = ConversationStore(Path(config.memory.db_path))
+    Path(config.memory.db_path).chmod(0o600)
     short_term = SessionMemory(conversation_store, max_tokens=session_tokens)
     agent = Agent(
         llm=llm,

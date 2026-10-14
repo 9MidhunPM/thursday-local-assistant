@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from assistant.security import redact_secrets
+from assistant.paths import private_dir
 
 
 def redact_private_request_text(user_text: str) -> str:
@@ -98,11 +99,12 @@ def _build_logger(name: str, level: int, log_file: Path, structured: bool = Fals
         )
     handler.setFormatter(formatter)
     logger.addHandler(handler)
+    log_file.chmod(0o600)
     return logger
 
 
 def setup_logging(directory: Path, level: str, structured: bool = False) -> Loggers:
-    directory.mkdir(parents=True, exist_ok=True)
+    private_dir(directory)
     level_value = logging.getLevelName(level.upper())
     if isinstance(level_value, str):
         level_value = logging.INFO

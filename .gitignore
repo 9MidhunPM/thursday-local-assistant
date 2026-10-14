@@ -67,6 +67,26 @@ venv.bak/
 .vscode/
 .idea/
 *.swp
+
+# Private desktop state, audio, captures and machine-specific installation data
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+*.wav
+*.mp3
+*.mp4
+*.webm
+*.har
+assistant/database/
+.thursday-local/
+desktop/local/
+desktop/backups/
+captures/
+recordings/
+*.local.json
+*.local.env
 *.swo
 *~
 
