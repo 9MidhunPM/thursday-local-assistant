@@ -1,0 +1,21 @@
+[Unit]
+Description=Thursday Super+Alt push-to-talk
+Requires=thursday.service
+After=graphical-session.target thursday.service
+PartOf=graphical-session.target thursday.service
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_SYSTEMD@
+ExecStart=@PYTHON_SYSTEMD@ -m assistant.hotkeys
+UMask=0077
+Restart=on-failure
+RestartSec=3
+RestartPreventExitStatus=78
+TimeoutStartSec=30
+TimeoutStopSec=10
+
+[Install]
+WantedBy=graphical-session.target

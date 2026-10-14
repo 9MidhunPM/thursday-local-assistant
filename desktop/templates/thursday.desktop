@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Thursday
+Comment=Open the Thursday desktop companion
+Exec=sh -c "timeout 40s systemctl --user start thursday.service && exec timeout 5s qs ipc call thursday focus"
+Icon=audio-input-microphone
+Terminal=false
+Categories=Utility;
+StartupNotify=false
