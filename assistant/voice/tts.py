@@ -1,82 +1,80 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import itertools
 import logging
-import os
-import queue as _queue_mod
+import queue
 import re
-import shlex
 import shutil
 import subprocess
 import sys
 import threading
-import time
 import uuid
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
+from assistant.paths import purge_runtime_files, runtime_dir
 from assistant.voice.base import TextToSpeech
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 _log = logging.getLogger("assistant.voice")
+IDLE_GRACE_SECONDS = 0.2
 
 
 class TTSQueuePriority(IntEnum):
-    """Priority levels for TTS queue. Higher = more urgent."""
+    """Higher priorities run first; equal priorities preserve sentence order."""
+
     LOW = 0
     NORMAL = 50
     HIGH = 100
-    INTERRUPT = 200  # Barge-in: stop current, clear queue, play immediately
+    INTERRUPT = 200
 
 
 @dataclass(order=True)
 class TTSQueueItem:
     priority: int
+    sequence: int
     text: str = field(compare=False)
-    timestamp: float = field(compare=False, default_factory=time.time)
-    item_id: str = field(compare=False, default_factory=lambda: uuid.uuid4().hex[:8])
+    item_id: str = field(compare=False, default_factory=lambda: uuid.uuid4().hex)
 
 
 class EdgeTTS(TextToSpeech):
     def __init__(
         self,
-        voice: str = "en-US-EmmaMultilingualNeural",
-        rate: str = "+25%",
+        voice: str = "en-GB-RyanNeural",
+        rate: str = "+0%",
         volume: str = "+0%",
         pitch: str = "+0Hz",
         mpv_profile: str = "low-latency",
-        on_speak_start: Any | None = None,
-        on_speak_end: Any | None = None,
-        on_audio_ready: Any | None = None,
+        on_speak_start: Callable[[], None] | None = None,
+        on_speak_end: Callable[[], None] | None = None,
+        on_audio_ready: Callable[[str, str], None] | None = None,
     ) -> None:
-        self._voice = voice
-        self._rate = rate
-        self._volume = volume
-        self._pitch = pitch
+        self._voice, self._rate = voice, rate
+        self._volume, self._pitch = volume, pitch
         self._mpv_profile = mpv_profile
         self._edge_tts_bin = self._find_edge_tts()
-        self._current_process: subprocess.Popen[Any] | None = None
-        self._lock = threading.Lock()
-        self._on_speak_start = on_speak_start
-        self._on_speak_end = on_speak_end
+        self._lock = threading.RLock()
+        self._on_speak_start, self._on_speak_end = on_speak_start, on_speak_end
         self._on_audio_ready = on_audio_ready
-
-        # Priority queue for sequential playback with barge-in support
-        self._speech_queue: _queue_mod.PriorityQueue[TTSQueueItem] = _queue_mod.PriorityQueue()
+        self._speech_queue: queue.PriorityQueue[TTSQueueItem] = queue.PriorityQueue()
         self._queue_active = False
-        self._stop_event = threading.Event()
-        self._interrupt_event = threading.Event()  # For barge-in
-        self._current_item: TTSQueueItem | None = None
+        self._queue_wake = threading.Event()
+        self._worker: threading.Thread | None = None
+        self._sequence = itertools.count()
+        self._generation = 0
+        self._syntheses: set[tuple[asyncio.AbstractEventLoop, asyncio.Task]] = set()
+        self._playback_process: subprocess.Popen | None = None
 
     @staticmethod
     def _find_edge_tts() -> str:
-        # Prefer the edge-tts that sits next to the running Python interpreter
-        # (i.e. the venv bin), then fall back to PATH lookups.  A binary from
-        # ~/.local/bin may point at a different interpreter that lacks the
-        # edge_tts package, so we verify each candidate before returning it.
-        venv_bin = Path(sys.executable).parent
         candidates = [
-            str(venv_bin / "edge-tts"),
+            str(Path(sys.executable).parent / "edge-tts"),
             shutil.which("edge-tts"),
             str(Path("~/.local/bin/edge-tts").expanduser()),
         ]
@@ -87,227 +85,209 @@ class EdgeTTS(TextToSpeech):
             seen.add(candidate)
             if not shutil.which(candidate) and not Path(candidate).is_file():
                 continue
-            # Keep startup local and fast. Listing voices makes a network call
-            # and used to delay the first usable spoken response.
             try:
                 probe = subprocess.run(
-                    [candidate, "--version"],
-                    capture_output=True, text=True, timeout=3,
+                    [candidate, "--version"], capture_output=True, text=True, timeout=3
                 )
                 if probe.returncode == 0:
                     return candidate
-                _log.warning(
-                    "edge-tts candidate %s failed (rc=%s): %s",
-                    candidate, probe.returncode, probe.stderr.strip()[:200],
-                )
-            except Exception as exc:
-                _log.warning("edge-tts candidate %s unusable: %s", candidate, exc)
-        raise FileNotFoundError(
-            "edge-tts not found or not functional. Install it via: pip install edge-tts"
-        )
+            except (OSError, subprocess.SubprocessError):
+                continue
+        message = "edge-tts not found or not functional. Install it via: pip install edge-tts"
+        raise FileNotFoundError(message)
 
-    def _build_cmd(self, text: str, output_path: str | None = None) -> list[str]:
-        cmd = [
-            self._edge_tts_bin,
-            "--voice", self._voice,
-            "--rate", self._rate,
-            "--volume", self._volume,
-            "--pitch", self._pitch,
-            "--text", text,
-        ]
-        if output_path:
-            cmd.extend(["--write-media", output_path])
-        return cmd
+    async def _generate(self, text: str, path: Path, generation: int) -> None:
+        import edge_tts  # noqa: PLC0415 - optional speech dependency
+
+        loop, task = asyncio.get_running_loop(), asyncio.current_task()
+        with self._lock:
+            if generation != self._generation:
+                raise asyncio.CancelledError
+            active = (loop, task)
+            self._syntheses.add(active)
+        try:
+            await asyncio.wait_for(
+                edge_tts.Communicate(
+                    text, self._voice, rate=self._rate, volume=self._volume, pitch=self._pitch
+                ).save(str(path)),
+                timeout=60,
+            )
+            path.chmod(0o600)
+        finally:
+            with self._lock:
+                self._syntheses.discard(active)
 
     def synthesize(self, text: str, output_path: str) -> None:
-        self.stop()
-        cmd = self._build_cmd(text, output_path)
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        if result.returncode != 0:
-            raise RuntimeError(f"TTS failed: {result.stderr.strip()}")
+        """Synthesize without exposing private speech in process arguments."""
+        with self._lock:
+            generation = self._generation
+        path = Path(output_path)
+        try:
+            asyncio.run(self._generate(self._clean_text(text), path, generation))
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
 
     def speak(self, text: str) -> None:
+        """Blocking local playback for CLI callers; stop() can interrupt it."""
         if not shutil.which("mpv"):
-            raise FileNotFoundError("mpv is required for playback.")
+            message = "mpv is required for playback."
+            raise FileNotFoundError(message)
         clean_text = self._clean_text(text)
-        if not clean_text.strip():
+        if not clean_text:
             return
         self.stop()
-        quoted_text = shlex.quote(clean_text.strip())
-        tts_cmd = (
-            f"{self._edge_tts_bin} --voice {shlex.quote(self._voice)} "
-            f"--rate {shlex.quote(self._rate)} --text {quoted_text} "
-            f"| mpv --profile={shlex.quote(self._mpv_profile)} --untimed --no-cache -"
-        )
-        subprocess.run(
-            tts_cmd,
-            shell=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=60,
-        )
-
-    def _kill_process_group(self, proc: subprocess.Popen[Any]) -> None:
+        with self._lock:
+            generation = self._generation
+        path = runtime_dir("tts") / f"tts_{uuid.uuid4().hex}.mp3"
+        process = None
         try:
-            pgid = os.getpgid(proc.pid)
-            os.killpg(pgid, 15)
-            proc.wait(timeout=2)
-        except Exception:
-            try:
-                pgid = os.getpgid(proc.pid)
-                os.killpg(pgid, 9)
-            except Exception:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
+            asyncio.run(self._generate(clean_text, path, generation))
+            with self._lock:
+                if generation != self._generation:
+                    return
+                process = subprocess.Popen(
+                    ["mpv", "--no-video", f"--profile={self._mpv_profile}", str(path)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                self._playback_process = process
+            process.wait(timeout=120)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if process is not None:
+                with contextlib.suppress(OSError):
+                    process.terminate()
+                with self._lock:
+                    if self._playback_process is process:
+                        self._playback_process = None
+            path.unlink(missing_ok=True)
 
     def stop(self) -> None:
-        """Stop all speech: clear queue, kill current process."""
-        self._stop_event.set()
-        self._interrupt_event.set()
-        # Drain the queue
-        while True:
-            try:
-                self._speech_queue.get_nowait()
-            except _queue_mod.Empty:
-                break
-        # Kill any currently generating process
+        """Invalidate queued/in-flight speech before accepting replacement text."""
         with self._lock:
-            if self._current_process and self._current_process.poll() is None:
-                self._kill_process_group(self._current_process)
-                self._current_process = None
+            self._generation += 1
+            self._queue_active = False
+            self._worker = None
+            while True:
+                try:
+                    self._speech_queue.get_nowait()
+                except queue.Empty:
+                    break
+            self._queue_wake.set()
+            for loop, task in tuple(self._syntheses):
+                # An event loop can close between its state check and delivery.
+                with contextlib.suppress(RuntimeError):
+                    loop.call_soon_threadsafe(task.cancel)
+            if self._playback_process is not None:
+                with contextlib.suppress(OSError):
+                    self._playback_process.terminate()
+                self._playback_process = None
 
     def speak_async(self, text: str, priority: TTSQueuePriority = TTSQueuePriority.NORMAL) -> None:
-        """Queue text for sequential audio generation and playback with priority."""
         clean_text = self._clean_text(text)
-        if not clean_text.strip():
+        if not clean_text:
             return
-
-        item = TTSQueueItem(
-            priority=-priority.value,  # Negative because PriorityQueue is min-heap
-            text=clean_text.strip(),
-        )
-        self._speech_queue.put(item)
-        self._ensure_queue_processor()
+        with self._lock:
+            self._speech_queue.put(TTSQueueItem(-priority.value, next(self._sequence), clean_text))
+            self._queue_wake.set()
+            self._ensure_queue_processor()
 
     def interrupt(self, text: str, priority: TTSQueuePriority = TTSQueuePriority.INTERRUPT) -> None:
-        """Barge-in: immediately stop current speech, clear queue, and play new text."""
-        self._interrupt_event.set()
-        # Signal stop to queue processor
-        self._stop_event.set()
-        # Wait briefly for queue processor to stop
-        time.sleep(0.05)
-        # Clear the queue
-        while True:
-            try:
-                self._speech_queue.get_nowait()
-            except _queue_mod.Empty:
-                break
-        # Kill current generation if any
-        with self._lock:
-            if self._current_process and self._current_process.poll() is None:
-                self._kill_process_group(self._current_process)
-                self._current_process = None
-        # Reset events for new speech
-        self._stop_event.clear()
-        self._interrupt_event.clear()
-        # Queue new high-priority item
+        self.stop()
         self.speak_async(text, priority=priority)
 
     def _ensure_queue_processor(self) -> None:
         with self._lock:
-            if not self._queue_active:
-                self._queue_active = True
-                self._stop_event.clear()
-                self._interrupt_event.clear()
-                threading.Thread(
-                    target=self._process_speech_queue, daemon=True
-                ).start()
+            if self._worker is not None:
+                return
+            self._queue_active = True
+            self._worker = threading.Thread(
+                target=self._process_speech_queue,
+                args=(self._generation, self._on_speak_start,
+                      self._on_audio_ready, self._on_speak_end),
+                daemon=True,
+            )
+            self._worker.start()
 
-    def _process_speech_queue(self) -> None:
-        """Background thread: picks text from queue, generates mp3,
-        fires on_audio_ready callback with the filename."""
-        tmp_dir = Path("/tmp/thursday_tts")
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-
+    def _process_speech_queue(self, generation, on_start, on_audio, on_end) -> None:
         fired_start = False
-
+        waited = False
         try:
-            while not self._stop_event.is_set():
-                try:
-                    # Wait for next item with short timeout to check stop event
-                    item: TTSQueueItem = self._speech_queue.get(timeout=0.2)
-                except _queue_mod.Empty:
+            tmp_dir = runtime_dir("tts")
+            purge_runtime_files(tmp_dir)
+            while True:
+                with self._lock:
+                    if generation != self._generation:
+                        return
+                    try:
+                        # Dequeue and generation validation are one operation.
+                        # A stale worker never puts old speech into a new queue.
+                        item = self._speech_queue.get_nowait()
+                    except queue.Empty:
+                        if waited:
+                            return
+                        self._queue_wake.clear()
+                        item = None
+                    if item is not None and not fired_start:
+                        fired_start = True
+                        if on_start:
+                            on_start()
+                if item is None:
+                    self._queue_wake.wait(IDLE_GRACE_SECONDS)
+                    waited = True
                     continue
-
-                if self._stop_event.is_set():
-                    break
-
-                # Check for interrupt (barge-in)
-                if self._interrupt_event.is_set():
-                    break
-
-                self._current_item = item
-
-                if not fired_start:
-                    if self._on_speak_start:
-                        self._on_speak_start()
-                    fired_start = True
-
-                filename = f"tts_{item.item_id}.mp3"
-                filepath = tmp_dir / filename
-
-                proc = subprocess.Popen(
-                    self._build_cmd(item.text, str(filepath)),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                    preexec_fn=os.setsid,
-                )
+                waited = False
+                path = tmp_dir / f"tts_{item.item_id}.mp3"
+                try:
+                    asyncio.run(self._generate(item.text, path, generation))
+                except asyncio.CancelledError:
+                    path.unlink(missing_ok=True)
+                    return
+                except Exception:
+                    path.unlink(missing_ok=True)
+                    _log.warning("Speech synthesis failed; retry or check the speech connection.")
+                    continue
                 with self._lock:
-                    self._current_process = proc
-
-                proc.wait()
-
-                with self._lock:
-                    if self._current_process == proc:
-                        self._current_process = None
-
-                # Check for interrupt after generation
-                if self._interrupt_event.is_set() or self._stop_event.is_set():
-                    if filepath.exists():
-                        filepath.unlink(missing_ok=True)
-                    break
-
-                # Notify that audio is ready
-                if filepath.exists() and self._on_audio_ready:
-                    self._on_audio_ready(filename, item.text)
-                else:
-                    stderr = proc.stderr.read().decode(errors="ignore") if proc.stderr else ""
-                    _log.warning(
-                        "TTS generation failed for %r (rc=%s): %s",
-                        item.text[:60], proc.returncode, stderr.strip()[:300],
-                    )
-
+                    if generation != self._generation:
+                        path.unlink(missing_ok=True)
+                        return
+                    if on_audio:
+                        on_audio(path.name, item.text)
+                    else:
+                        path.unlink(missing_ok=True)
+        except Exception:
+            _log.warning("Speech queue failed; retry or check the speech connection.")
         finally:
             with self._lock:
-                self._queue_active = False
-                self._current_process = None
-                self._current_item = None
-            if fired_start and self._on_speak_end:
-                self._on_speak_end()
+                if self._worker is threading.current_thread():
+                    if fired_start and generation == self._generation and on_end:
+                        try:
+                            on_end()
+                        except Exception:
+                            _log.warning("Speech completion delivery failed")
+                    # A completion callback can itself stop and replace speech.
+                    # Never clear the replacement worker's ownership.
+                    if self._worker is threading.current_thread():
+                        self._worker = None
+                        self._queue_active = False
+                        if not self._speech_queue.empty():
+                            self._ensure_queue_processor()
 
     @staticmethod
     def _clean_text(text: str) -> str:
-        text = re.sub(r"[*_`#\[\]]", "", text)
-        text = re.sub(r"\[.*?\]\(.*?\)", "", text)
-        return text.strip()
+        text = re.sub(r"```.*?(?:```|$)", " ", text, flags=re.DOTALL)
+        text = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", text)
+        text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
+        text = re.sub(r"(?:https?://|www\.)\S+", " ", text)
+        text = re.sub(r"`[^`]*(?:`|$)", " ", text)
+        text = re.sub(r"[*_`#\[\]<>]", "", text)
+        return re.sub(r"\s+", " ", text).strip()
 
     @staticmethod
     def list_voices() -> list[dict[str, str]]:
-        edge_tts_bin = EdgeTTS._find_edge_tts()
         result = subprocess.run(
-            [edge_tts_bin, "--list-voices"],
+            [EdgeTTS._find_edge_tts(), "--list-voices"],
             capture_output=True, text=True, timeout=15,
         )
         voices: list[dict[str, str]] = []
