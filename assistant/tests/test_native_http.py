@@ -182,3 +182,39 @@ def test_private_audio_requires_auth_and_refuses_links(native_api, tmp_path):
     other.write_text("Private fixture")
     path.symlink_to(other)
     assert client.get("/api/audio/tts_12345678.mp3").status_code == 404
+
+
+def test_browser_exchange_authenticates_cookie_sse_and_preserves_origin_guards(native_api):
+    client, _runtime, _controller, _broker = native_api
+    with httpx.Client(base_url=client.base_url, timeout=5) as browser:
+        assert browser.get("/api/browser-session").status_code == 401
+        rejected = browser.post("/api/browser-session", headers={"Authorization": "Bearer wrong"})
+        assert rejected.status_code == 401
+        approved = browser.post(
+            "/api/browser-session", headers={"Authorization": "Bearer fixture-native-access"}
+        )
+        assert approved.status_code == 200
+        cookie = approved.headers["set-cookie"]
+        assert "HttpOnly" in cookie
+        assert "SameSite=Strict" in cookie
+        assert "Path=/api" in cookie
+        assert "fixture-native-access" not in cookie
+        assert browser.get("/api/browser-session").status_code == 200
+        assert browser.get("/api/voice").status_code == 200
+        with browser.stream("GET", "/api/events?client_id=fixture-browser") as stream:
+            assert stream.status_code == 200
+            first = next(stream.iter_lines())
+            assert '"type": "init"' in first
+        # A signed session grants API use, but renewal asks for the operator
+        # token again. Cross-origin callers cannot mint a browser session.
+        assert browser.post("/api/browser-session").status_code == 401
+        assert (
+            browser.post(
+                "/api/browser-session",
+                headers={
+                    "Authorization": "Bearer fixture-native-access",
+                    "Origin": "https://untrusted.example",
+                },
+            ).status_code
+            == 403
+        )

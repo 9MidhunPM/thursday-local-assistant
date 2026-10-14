@@ -41,6 +41,37 @@
   --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+.connection-gate {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.connection-gate form {
+  width: min(100%, 420px);
+  display: grid;
+  gap: 18px;
+  padding: 32px;
+  background: var(--panel-bg-strong);
+  border: 1px solid var(--panel-border-strong);
+  border-radius: var(--radius-lg);
+}
+.connection-gate h1 { font-size: 24px; color: var(--text-main); }
+.connection-gate p { color: var(--text-muted); line-height: 1.5; }
+.connection-gate label { color: var(--text-main); font-size: 14px; }
+.connection-gate input, .connection-gate button {
+  min-height: 44px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--panel-border-strong);
+  padding: 10px 14px;
+  font: inherit;
+}
+.connection-gate input { background: var(--bg-base); color: var(--text-main); }
+.connection-gate button { background: var(--accent-1); color: var(--bg-base); cursor: pointer; }
+.connection-gate :focus-visible { outline: 2px solid var(--accent-1); outline-offset: 3px; }
+.connection-gate button:disabled { opacity: 0.6; cursor: wait; }
+.connection-gate [role="alert"] { color: var(--error-color); }
+
 * {
   box-sizing: border-box;
   margin: 0;

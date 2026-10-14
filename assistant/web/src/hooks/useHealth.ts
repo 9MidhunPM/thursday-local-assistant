@@ -7,6 +7,7 @@ export interface HealthInfo {
   model: string
   mode: string
   clients: number
+  authRequired: boolean
 }
 
 const EMPTY: HealthInfo = {
@@ -16,6 +17,7 @@ const EMPTY: HealthInfo = {
   model: '',
   mode: '',
   clients: 0,
+  authRequired: false,
 }
 
 export function useHealth(): HealthInfo {
@@ -33,7 +35,14 @@ export function useHealth(): HealthInfo {
           status?: string
           model_ready?: boolean
           tts_active?: boolean
+          auth_required?: boolean
         }
+        if (cancelled) return
+        // The HttpOnly session is scoped to /api; check it there rather than
+        // relying on a cookie being sent to the public health endpoint.
+        const authRequired = data.auth_required
+          ? !(await fetch('/api/browser-session', { cache: 'no-store' })).ok
+          : false
         if (cancelled) return
         setInfo({
           modelReady: data.model_ready ?? data.modelReady ?? false,
@@ -42,6 +51,7 @@ export function useHealth(): HealthInfo {
           model: data.model ?? '',
           mode: data.mode ?? '',
           clients: data.clients ?? 0,
+          authRequired,
         })
       } catch {
         /* server may briefly be down; keep last known state */

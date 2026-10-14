@@ -25,6 +25,10 @@ from assistant.integrations.browser_bridge import browser_bridge
 from assistant.runtime import AssistantRuntime
 from assistant.paths import runtime_dir, private_write, purge_runtime_files
 from assistant.security import (
+    api_token,
+    create_browser_session,
+    BROWSER_SESSION_COOKIE,
+    BROWSER_SESSION_TTL,
     assert_bind_allowed,
     check_request_auth,
     require_token_configured_for_remote,
@@ -437,6 +441,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 "provider": provider,
                 "model": model_name,
                 "mode": mode,
+                "auth_required": bool(api_token() and not check_request_auth(self._headers_dict())),
                 "brave_helper": browser_bridge.status(),
                 "desktop": server_runtime.agent.hypruse.status()
                     if server_runtime and getattr(server_runtime.agent, "hypruse", None)
@@ -457,6 +462,12 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             if not self._require_local_origin():
                 return
             self._send_json(200, _voice().snapshot())
+            return
+
+        if parsed_path == "/api/browser-session":
+            if not self._require_local_origin():
+                return
+            self._send_json(200, {"ok": True})
             return
 
         if self.path == "/api/tools":
@@ -834,7 +845,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         parsed_path = parsed.path
         query = parse_qs(parsed.query)
         q_token = (query.get("token") or [None])[0]
-        if parsed_path.startswith(("/api/tasks/", "/api/memory/", "/api/message", "/api/confirm", "/api/voice", "/api/playback")) and not self._require_local_origin():
+        if parsed_path.startswith(("/api/tasks/", "/api/memory/", "/api/message", "/api/confirm", "/api/voice", "/api/playback", "/api/browser-session")) and not self._require_local_origin():
             return
 
         if parsed_path == "/api/browser-bridge/v2/result":
@@ -866,6 +877,23 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
         # All mutating API routes require the optional shared token when configured.
         if parsed_path.startswith("/api/") and not self._require_auth(query_token=q_token):
+            return
+
+        if parsed_path == "/api/browser-session":
+            # Renewal requires the operator token again, never only an old cookie.
+            supplied = self._headers_dict()
+            supplied.pop("Cookie", None)
+            supplied.pop("cookie", None)
+            if api_token() and not check_request_auth(supplied):
+                self._send_json(401, {"error": "A local access token is required"})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            if api_token():
+                self.send_header("Set-Cookie", f"{BROWSER_SESSION_COOKIE}={create_browser_session()}; HttpOnly; SameSite=Strict; Path=/api; Max-Age={BROWSER_SESSION_TTL}")
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
             return
 
         if parsed_path.startswith("/api/voice/"):
