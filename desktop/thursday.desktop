@@ -2,12 +2,11 @@
 Type=Application
 Name=Thursday
 GenericName=AI Assistant
-Comment=OpenAI GPT-5.6 Luna assistant — opens the Web UI; closing the window stops the server
-Exec=/home/midhun/Coading/ThursdayV3/run_with_llm.sh
-Path=/home/midhun/Coading/ThursdayV3
-Icon=utilities-terminal
+Comment=Open the Thursday desktop companion
+Exec=sh -c "timeout 40s systemctl --user start thursday.service && exec timeout 5s qs ipc call thursday focus"
+Icon=audio-input-microphone
 Terminal=false
 Categories=Utility;ArtificialIntelligence;
-Keywords=Thursday;OpenAI;GPT;GPT-5.6;Luna;Assistant;Chat;JARVIS;
-StartupNotify=true
+Keywords=Thursday;Assistant;Chat;Voice;
+StartupNotify=false
 StartupWMClass=Thursday
