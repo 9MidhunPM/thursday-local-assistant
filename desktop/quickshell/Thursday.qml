@@ -13,7 +13,10 @@ Scope {
     id: root
     property string repoRoot: ""
     property var theme: null
-    readonly property color background: theme ? theme.bgPanelStrong : "#f0141c26"
+    // A conversation needs a quieter surface than the translucent desktop bar.
+    readonly property color background: theme
+        ? Qt.rgba(theme.bgPanelStrong.r, theme.bgPanelStrong.g, theme.bgPanelStrong.b, 0.97)
+        : "#f7141c26"
     readonly property color foreground: theme ? theme.textMain : "#d8e9f8"
     readonly property color secondary: theme ? theme.textSoft : "#b8d0e5"
     readonly property color accent: theme ? theme.accentBlue : "#a5d3f5"
