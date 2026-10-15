@@ -54,7 +54,7 @@ class YouTubeSearchTool(BaseTool):
         if key in cache:
             return dict(cache[key])
         search_query = f"{query} {'official channel ' if kind == 'channel' else ''}site:youtube.com"
-        result = WebSearchTool(timeout=10).execute(
+        result = WebSearchTool(timeout=5, preferred_timeout=2).execute(
             {"query": search_query, "max_results": 5}, context
         )
         matches = []

@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import httpx
@@ -35,3 +36,30 @@ def test_search_falls_back_with_sanitized_diagnostics_and_deduplicates():
     assert len(result["results"]) == 1
     assert result["results"][0]["url"] == "https://example.com/page"
 
+
+def test_slow_preferred_provider_is_cancelled_before_public_fallback():
+    tool = WebSearchTool(timeout=1, preferred_timeout=0.02)
+    tool.use_google = False
+    tool.use_generic = True
+    cancelled = []
+
+    async def generic(_query):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.append(True)
+
+    async def fallback(_query):
+        assert cancelled == [True]
+        return [SearchResult("Channel", "https://example.com/channel", "Result", "duckduckgo")]
+
+    tool._search_generic = generic
+    tool._search_duckduckgo = fallback
+    result = tool.execute({"query": "creator channel"}, SimpleNamespace())
+    assert result["success"]
+    assert result["provider"] == "duckduckgo"
+    assert result["attempts"][0] == {
+        "provider": "generic",
+        "status": "error",
+        "error": "request timed out",
+    }

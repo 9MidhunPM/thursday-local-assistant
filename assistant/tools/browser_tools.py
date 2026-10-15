@@ -46,7 +46,7 @@ def _canonical_result_url(url: str) -> str:
 def _safe_provider_error(exc: Exception) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
         return f"HTTP {exc.response.status_code}"
-    if isinstance(exc, httpx.TimeoutException):
+    if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
         return "request timed out"
     if isinstance(exc, httpx.RequestError):
         return type(exc).__name__
@@ -78,9 +78,10 @@ class WebSearchTool(BaseTool):
         },
     )
 
-    def __init__(self, max_results: int = 5, timeout: int = 15):
+    def __init__(self, max_results: int = 5, timeout: int = 15, preferred_timeout: float = 3):
         self._max_results = max_results
         self.timeout = timeout
+        self._preferred_timeout = max(0.01, min(float(preferred_timeout), float(timeout)))
         self._client: httpx.AsyncClient | None = None
 
         # Google Custom Search credentials
@@ -443,7 +444,12 @@ class WebSearchTool(BaseTool):
             try:
                 for provider_name, search in providers:
                     try:
-                        candidate_results = await search(query)
+                        budget = (
+                            self.timeout
+                            if provider_name == "duckduckgo"
+                            else self._preferred_timeout
+                        )
+                        candidate_results = await asyncio.wait_for(search(query), timeout=budget)
                         attempts.append(
                             {
                                 "provider": provider_name,
