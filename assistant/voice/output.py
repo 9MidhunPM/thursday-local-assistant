@@ -50,6 +50,10 @@ def _level(node: dict) -> str:
     for record in records if isinstance(records, list) else []:
         if isinstance(record, dict):
             props.update(record)
+    # PipeWire represents an unused optional soft gain as an empty array.
+    # Its absence does not invalidate known channel gain; null remains invalid.
+    if props.get("softVolumes") == []:
+        props.pop("softVolumes")
     if props.get("mute") is True or props.get("softMute") is True:
         return "muted"
     if any(key in props and not isinstance(props[key], bool) for key in ("mute", "softMute")):

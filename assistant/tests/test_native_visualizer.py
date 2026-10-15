@@ -127,20 +127,24 @@ def test_system_output_gate_clears_false_speech_and_recovers_without_blocking_pl
         "const speaking = new Function('playbackRunning', 'nativeOutput', "
         + json.dumps("return " + expression) + ");"
         + "const notice = new Function('playingAudio', 'playbackRunning', 'speaking', "
+        + "'outputSetupComplete', "
         + "'nativeOutput', " + json.dumps(notice) + ");"
         + "const events = " + json.dumps(events) + ";"
         + "console.log(JSON.stringify(events.map(output => { "
         + "const active = speaking(true, output); return {speaking: active, "
-        + "notice: notice({}, true, active, output)}; })));"
+        + "notice: notice({}, true, active, true, output), "
+        + "setup_notice: notice({}, true, active, false, output)}; })));"
     )
     result = subprocess.run([node, "-e", script], text=True, capture_output=True, check=True)
     states = json.loads(result.stdout)
     for blocked in states[:3]:
         assert not blocked["speaking"]
         assert blocked["notice"]
-    assert states[3] == {"speaking": False, "notice": ""}
-    assert states[4] == {"speaking": True, "notice": ""}
-    assert states[5] == {"speaking": False, "notice": ""}
+    for state in states:
+        assert state["setup_notice"] == ""
+    assert states[3] == {"speaking": False, "notice": "", "setup_notice": ""}
+    assert states[4] == {"speaking": True, "notice": "", "setup_notice": ""}
+    assert states[5] == {"speaking": False, "notice": "", "setup_notice": ""}
     next_audio = source.split("function nextAudio()", 1)[1].split("function reportPlaying()", 1)[0]
     assert "player.play()" in next_audio
     assert "if (nativeOutput" not in next_audio

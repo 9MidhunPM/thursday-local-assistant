@@ -97,7 +97,7 @@ def test_unknown_or_invalid_volume_cannot_prove_audibility(value):
     [
         ("softVolumes", None),
         ("softVolumes", "1"),
-        ("softVolumes", []),
+        ("channelVolumes", []),
         ("softVolumes", [1, -1]),
         ("softVolumes", [1, float("nan")]),
         ("channelVolumes", [-1, 1]),
@@ -124,6 +124,17 @@ def test_invalid_volume_delta_replaces_prior_valid_control():
     assert output.output_state(parser.graph, 100)["audible"]
     parser.feed(b'[{"id":2,"info":{"params":{"Props":[{"softVolumes":null}]}}}]')
     assert not output.output_state(parser.graph, 100)["known"]
+
+
+def test_live_qt_stream_empty_optional_soft_gain_preserves_known_channel_levels():
+    data = graph()
+    data[2]["info"]["params"]["Props"][0].update(
+        channelVolumes=[0.614125, 0.614125], volume=1,
+        mute=False, softMute=False, softVolumes=[],
+    )
+    assert output.output_state(data, 100) == {
+        "known": True, "audible": True, "node_ids": [2], "reason": "ready",
+    }
 
 
 def test_inactive_link_is_not_an_output_route():

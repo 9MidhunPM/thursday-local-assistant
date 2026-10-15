@@ -62,6 +62,7 @@ Scope {
     property int playbackPosition: 0
     property string reportedPlayingAudio: ""
     property var nativeOutput: ({known: false, audible: false, node_ids: [], reason: "checking"})
+    property bool outputSetupComplete: false
     readonly property var audioEnvelope: playingAudio ? playingAudio.audio_levels || null : null
     readonly property bool playbackRunning: !!playingAudio && !muted && output.volume > 0
         && player.playbackState === MediaPlayer.PlayingState && player.hasAudio
@@ -69,7 +70,7 @@ Scope {
         && [MediaPlayer.LoadedMedia, MediaPlayer.BufferingMedia, MediaPlayer.BufferedMedia].indexOf(player.mediaStatus) >= 0
     readonly property bool speaking: playbackRunning && nativeOutput.known === true && nativeOutput.audible === true
     readonly property string outputNotice: {
-        if (!playingAudio || !playbackRunning || speaking) return ""
+        if (!playingAudio || !playbackRunning || speaking || !outputSetupComplete) return ""
         if (nativeOutput.reason === "muted") return "Thursday's system audio stream is muted. Check your sound settings."
         if (nativeOutput.reason === "volume_zero") return "Thursday's system audio volume is at zero. Check your sound settings."
         if (nativeOutput.reason === "unlinked") return "Thursday's audio has no active speaker connection."
@@ -177,6 +178,8 @@ Scope {
         speechNotice = ""
         speechError = ""
         nativeOutput = {known: false, audible: false, node_ids: [], reason: "checking"}
+        outputSetupTimer.stop()
+        outputSetupComplete = false
         feedback("idle", generation)
     }
     function nextAudio() {
@@ -187,6 +190,8 @@ Scope {
         playbackPosition = 0
         reportedPlayingAudio = ""
         nativeOutput = {known: false, audible: false, node_ids: [], reason: "checking"}
+        outputSetupComplete = false
+        outputSetupTimer.restart()
         player.source = playingAudio.local_url
         player.play()
     }
@@ -510,7 +515,11 @@ Scope {
         volume: 0.85
         muted: root.muted
     }
-    onSpeakingChanged: reportPlaying()
+    onSpeakingChanged: {
+        if (speaking) outputSetupComplete = true
+        reportPlaying()
+    }
+    Timer { id: outputSetupTimer; interval: 1500; onTriggered: root.outputSetupComplete = true }
     Timer {
         interval: 40
         repeat: true
