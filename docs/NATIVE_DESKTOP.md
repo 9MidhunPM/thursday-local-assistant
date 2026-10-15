@@ -34,12 +34,67 @@ personal preferences. Keep it private with `chmod 600 .env`:
 
 ```bash
 THURSDAY_USER_NAME="Your name"
+THURSDAY_TTS_ENGINE=online
+THURSDAY_TTS_LOCAL_VOICE=bm_george
+THURSDAY_TTS_SPEED=1.0
 THURSDAY_TTS_VOICE=en-GB-RyanNeural
 THURSDAY_TTS_RATE=+0%
 ```
 
 The model, STT, and TTS choices have separate network requirements. A successful import or `/health`
 response does not verify microphone hardware, provider authentication, or audio playback.
+
+## Natural voice
+
+The default engine uses Edge's British male `en-GB-RyanNeural`. Edge TTS 7.3.1 or newer is required:
+its [upstream handshake fix](https://github.com/rany2/edge-tts/pull/492) resolves the service's
+October 2026 HTTP 403 rejection. Upgrade through the checkout's dependency installation command,
+then restart the backend. Speech clips are loudness-normalized with a bounded true peak; this
+does not change system or per-application volume. `THURSDAY_TTS_RATE=+8%` gives a slightly quicker
+online delivery, while `+0%` retains the voice's original pace.
+
+Optional local Kokoro synthesis provides offline speech and an announced fallback when the
+online provider fails. Its setup requires `uv` on `PATH` and a Python 3.13 interpreter available
+to it. Install deliberately:
+
+```bash
+.venv/bin/python -m assistant.voice.neural_setup
+```
+
+The neural runtime uses a separate Python 3.13 environment, so the main application can use
+Python 3.14. A persistent CPU worker reuses the loaded model across sentences; interruption
+terminates an active worker and discards its unfinished audio. Speech travels through stdin,
+without model API credentials in the worker environment or text in command arguments.
+
+The default environment is `$XDG_DATA_HOME/thursday/neural-venv`
+(`~/.local/share/thursday/neural-venv`), and models live in
+`$XDG_CACHE_HOME/thursday/voices/kokoro` (`~/.cache/thursday/voices/kokoro`). To choose an existing
+interpreter, pass `--python /path/to/python3.13`. Setup refuses to modify an unmarked existing
+runtime directory, installs only hash-verified wheels, and verifies model size and SHA256.
+
+Setup verifies fixed SHA256 hashes for the FP16 model and voice table, about 192 MB combined.
+Model downloads are a setup operation, not a side effect of speaking. Keep its environment,
+models, generated audio, and local installation metadata out of Git. The
+[Kokoro model card](https://huggingface.co/hexgrad/Kokoro-82M) documents the Apache 2.0 model;
+the [ONNX wrapper](https://github.com/thewh1teagle/kokoro-onnx) is MIT licensed and uses eSpeak NG
+for phonemization, whose GPL terms remain separate.
+
+`ffmpeg` converts generated PCM into the shared playback format and supplies measured
+visualization levels. `pw-dump` observes the native output route. Missing neural files produce
+an actionable setup error; the robotic voice is not an automatic replacement.
+
+| Setting | Behavior |
+| --- | --- |
+| `THURSDAY_TTS_ENGINE=neural` | Local neural synthesis, with no online-provider wait |
+| `THURSDAY_TTS_LOCAL_VOICE=bm_george` | British male voice; `bm_lewis` and American male `am_michael` are also supported |
+| `THURSDAY_TTS_SPEED=1.0` | Normal pace; supported range 0.8–1.2 |
+| `THURSDAY_TTS_ENGINE=online` | Default: Edge with `THURSDAY_TTS_VOICE` and `THURSDAY_TTS_RATE`; installed local neural fallback is announced |
+| `THURSDAY_TTS_EMERGENCY_FALLBACK=false` | Keep the robotic emergency voice disabled unless deliberately enabled |
+| `THURSDAY_NEURAL_PYTHON`, `THURSDAY_NEURAL_MODELS` | Override the private environment/model locations |
+
+Restart `thursday.service` after changing these settings. The online provider can reject requests
+before producing audio even when its package imports successfully. Selecting the local engine
+avoids that dependency; do not mistake the emergency voice for neural synthesis.
 
 ## Install and inspect
 
@@ -66,7 +121,8 @@ The managed changes are narrow:
   target. The voice daemon owns Super+Alt; Right Shift continues to serve the existing bar binding.
 - Add a session-start wrapper that imports graphical session variables into the user manager,
   starts the supervised services, and stops them when the compositor session ends.
-- Install the application launcher and update recognized Thursday-specific wrapper scripts.
+- Install the native and **Thursday Web** application launchers and update recognized
+  Thursday-specific wrapper scripts.
 
 The installer retains private backups and a manifest in
 `$XDG_STATE_HOME/thursday/desktop-install` (default `~/.local/state/thursday/desktop-install`).
@@ -98,8 +154,16 @@ HUD only hides it; use the explicit Stop/Cancel controls to cancel work.
 
 Typed native replies are silent by default. **Speak typed replies** enables their playback;
 **Voice off** mutes native playback, and **Motion off** reduces animation. These preferences live
-in the ignored local `$XDG_CONFIG_HOME/thursday/native.json`. **Full app** opens the web interface
-for detailed history, memory review, task evidence, and Codex project controls.
+in the ignored local `$XDG_CONFIG_HOME/thursday/native.json`. The header's **Web app** button,
+the settings menu's **Full app**, the **Thursday Web** application launcher, and `./run_web.sh`
+open detailed history, memory review, task evidence, and Codex project controls. They wait for the
+supervised backend and reuse the existing dedicated Brave window for that local server.
+
+The speech visualizer uses decoded audio levels at the current playback position. Silence and
+stopped playback leave it flat; reduced motion uses a static level bar. The helper observes
+Quickshell's own PipeWire stream and linked output while speech files are retained. A muted,
+zero-volume, or disconnected route shows a playback notice. This read-only check never changes
+volume and does not measure sound from the physical speaker.
 
 Closing chat or the web tab keeps the backend available. `run_with_llm.sh` starts the installed
 backend and toggles chat; `run_hotkeys.sh` starts its installed user service. `run.sh` is a foreground
@@ -133,7 +197,8 @@ credentials or configuration contents.
 | UI says it cannot authorize | Match the local `THURSDAY_API_TOKEN`; restart the backend and reload the native helper |
 | “Microphone unavailable” | Default audio input, hardware permissions, PyAudio and PortAudio availability |
 | Transcription fails | STT provider connectivity/configuration; recording and key detection are separate stages |
-| Text works but speech fails | TTS provider, native mute setting, Qt Multimedia playback, default output device |
+| Text works but speech fails | TTS provider, native mute setting, Qt Multimedia playback, per-app PipeWire channel levels, default output device |
+| Web interface is hard to find | Header **Web app**, **Thursday Web** in the application menu, `./run_web.sh`, or `http://127.0.0.1:5005` |
 | Hypruse unavailable | Same-venv packages, actual Hyprland socket/display/session bus, sanitized desktop status in `/health` |
 | Changed managed configuration | Inspect the named path and installer dry-run; do not remove the linked module piecemeal |
 
@@ -141,6 +206,13 @@ credentials or configuration contents.
 presence is not a successful live desktop observation. Do not paste full logs, screenshots, session
 state, or personal configuration into public issues. Share the sanitized doctor result and a
 minimal reproduction instead.
+
+For audio diagnosis, `qs ipc call thursday audioStatus` reports bounded playback/device/level
+state without speech text or credentials. Qt can report that a clip is playing while
+WirePlumber has restored zero channel levels for the application. Check the application's
+stream in your volume mixer as well as the system output. Do not reset the entire audio state
+or raise unrelated applications to repair one stream. `ffmpeg` supplies decoded visualization
+levels; `pw-dump` supplies the PipeWire route observation.
 
 The optional API token is sent in headers by the native helper and hotkeys. It never appears in
 QML, process arguments, or event URLs. When configured, the web app asks for the local access token
@@ -154,7 +226,8 @@ changing the token invalidates existing browser sessions after restarting the ba
 | --- | --- |
 | Model prompts, relevant memories, tool results, requested captures | Sent to the configured model endpoint; the default is cloud-hosted |
 | Microphone audio | Captured in memory by the backend; the default Google recognizer receives the audio |
-| Spoken response text | Sent to the Edge TTS service; speech text is not placed in subprocess arguments |
+| Spoken response text | Sent to Edge TTS by default; optional Kokoro synthesis stays local. Speech text is not placed in subprocess arguments |
+| Neural model and voices | Downloaded explicitly with pinned checksums into private local storage; excluded from Git |
 | Native event stream | Authenticated by the private Python helper; QML receives normalized events, not the API token |
 | Generated audio | Private files in the session runtime directory; native copies expire or are deleted after playback |
 | Desktop captures | Transient previews with bounded retention; excluded from persistent conversation/image logs |
@@ -195,7 +268,7 @@ A model/voice change does not require deleting databases or uninstalling the com
 
 ## Acceptance scenarios
 
-The checked development baseline has 272 passing Python tests, one known dependency `aifc`
+The checked development baseline has 422 passing Python tests, one known dependency `aifc`
 deprecation warning, a passing Vite 7.3.7 build, and zero findings in the checked npm audit.
 Controlled tests cover fragmented SSE, token headers, speech ordering/interruption, expired
 approvals, microphone state ownership, dependency failures, installer conflicts, and rollback.
@@ -212,6 +285,26 @@ that a physical voice request produced both a transcript and a spoken reply. A r
 completed with successful capability discovery and an observed `hypruse__desktop` result.
 These are host-specific checks; the voice result is human confirmation rather than automated
 microphone or acoustic playback measurement.
+
+The subsequent browser repair reproduced five search-driven tabs in the original task trace.
+A real channel-open task then completed with one read-only `youtube_search` and one `open_url`
+dispatch. After bounding the slow preferred provider, a separate public search returned matching
+channel results in 2.98 seconds without browser navigation; this is search timing, not total task
+latency.
+
+An additional live native fixture passed eight output-gate cases: usable PipeWire route, actual
+Qt playback while muted, no false speaking feedback on a fresh muted clip, recovery with one
+playing report, measured waveform recovery, real silence, and Stop. Its targeted fixture mute
+state was restored and its processes were stopped. A saved zero per-application channel level
+was separately repaired on the host, after which the user confirmed audible speech. Neural
+inference produced non-silent 24 kHz audio with the persistent worker reused between requests.
+
+Edge TTS 7.3.1 subsequently restored Ryan synthesis in direct and service-environment checks.
+Speech normalization measured approximately -16.5 LUFS on a Ryan sample. A live app replay
+still hit a transient online failure and used the local fallback; its diagnosis remains a
+separate acceptance check. Safe failure classifications and short transient cooldowns make
+that state visible without recording speech text or locking the app onto fallback for five
+minutes. Human voice-quality acceptance must be confirmed after an observed online replay.
 
 Use these scenarios when validating another installation or changing the integration:
 

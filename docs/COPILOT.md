@@ -21,8 +21,9 @@ web session, use `./run.sh --web`; the launcher checks dependencies without inst
 
 Hypruse 0.11.0 and MCP 1.x are constrained to tested compatible versions in the same virtual
 environment. The private `.env` supplies credentials and identity; no global Codex plugin or MCP
-configuration is modified. Restart the backend after changing configuration. The default model,
-Google STT, and Edge TTS use cloud services; see [data flow](NATIVE_DESKTOP.md#privacy-and-data-flow).
+configuration is modified. Restart the backend after changing configuration. The default model
+and Google STT use cloud services. The default Edge voice also sends response text to its service;
+optional Kokoro synthesis stays local. See [data flow](NATIVE_DESKTOP.md#privacy-and-data-flow).
 
 The active configuration has 24 tool steps, a 300-second task budget, a 24,000-token request
 budget, up to 8,000 tokens of recent history, and 4,096 output tokens. The safe example retains
@@ -140,7 +141,7 @@ Rerun deliberately: `--live` makes paid requests, and fixtures do not touch the 
 
 ## Verification and limits
 
-The native integration baseline has 272 passing Python tests, with one known dependency `aifc`
+The native integration baseline has 422 passing Python tests, with one known dependency `aifc`
 deprecation warning. Controlled coverage includes Responses replay, tool validation, checkpoints,
 memory correction/deletion, guarded desktop approval, fragmented SSE, authentication, voice
 ownership, speech ordering/interruption, and installer rollback conflicts. The Vite 7.3.7 production

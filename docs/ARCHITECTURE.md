@@ -19,14 +19,17 @@ flowchart TD
     Agent --> Tools[Files, system, browser, media, Codex]
     Agent --> Hypruse[Owned Hypruse MCP child]
     Agent <--> Store[Local SQLite history and memory]
-    Server --> TTS[Edge TTS synthesis queue]
+    Server --> TTS[Ordered speech synthesis queue]
+    TTS --> Neural[Local Kokoro worker]
+    TTS --> Edge[Optional Edge TTS service]
     TTS --> Server
     Server -->|Client and generation scoped audio| Helper
 ```
 
-Default cloud model, Google STT, and Edge TTS are independent network dependencies. A local
-server or SQLite database does not imply that prompts, microphone audio, or speech text remain
-on the machine. [Data handling](NATIVE_DESKTOP.md#privacy-and-data-flow) describes each boundary.
+The default cloud model, Google STT, and Edge TTS are independent network dependencies. Edge
+sends response text to its service; optional Kokoro synthesis stays local. A local
+server or SQLite database does not imply that prompts and microphone audio remain on the
+machine. [Data handling](NATIVE_DESKTOP.md#privacy-and-data-flow) describes each boundary.
 
 ## Process and interface ownership
 
@@ -41,6 +44,9 @@ on the machine. [Data handling](NATIVE_DESKTOP.md#privacy-and-data-flow) describ
   private runtime files. Credentials never cross its JSONL boundary into QML.
 - The React app provides detailed conversation history, tool results, task evidence, memory
   review, and Codex controls. The legacy HTML fallback is a basic compatibility surface.
+- `assistant/web_launch.py` starts the supervised backend when requested and opens or focuses
+  its dedicated Brave app window. An origin-specific lock prevents concurrent launches from
+  creating duplicate windows; focus failures preserve the existing window and report an error.
 - `assistant/desktop_install.py` installs the supported existing Hyprland Lua/Quickshell layout
   using an allowlist, private backups, and managed-file hashes. Unsupported layouts and conflicting
   edits are rejected. Uninstall preserves the complete installation when a conflict needs review.
@@ -93,6 +99,13 @@ audio fetch, gives QML a private file URL, and deletes its copy after playback o
 feedback distinguishes synthesis from actual playing/idle/failed state. Late audio from interrupted
 generations is discarded.
 
+The native helper decodes bounded PCM envelopes with `ffmpeg`. The visualizer samples them at
+Qt's current playback position, retaining zero for silence. While native speech files exist,
+one bounded `pw-dump --monitor` child observes Quickshell's own stream, active output links,
+and stream/sink gain. Only filtered readiness and ownership IDs enter QML. Speaking feedback
+requires actual playback and an observed usable route; this does not establish physical acoustic
+output. The observer stops when the last owned file is released or the helper closes.
+
 Native typed replies are silent unless the local `speak_typed` preference is enabled. Native mute
 suppresses playback; reduced motion affects visual feedback. Personal voice identity/rate come
 from environment overrides. Provider failures are errors, never transcription text sent to the agent.
@@ -103,6 +116,12 @@ Built-in tools are discovered through `assistant/tools/registry.py`. Each declar
 schema and implements deterministic execution. Native integrations use Linux interfaces such as
 MPRIS, Hyprland IPC, Thunar, and indexed filename search. The managed Brave Helper uses the normal
 signed-in browser profile; Gmail drafts remain unsent and Calendar writes require confirmation.
+
+`youtube_search` returns channel/video evidence without opening a browser. `open_url` validates
+HTTP(S) targets and records dispatch outcomes in a task-local ledger shared across tool
+instances. Repeated requests for that URL reuse the recorded dispatched/uncertain outcome;
+they cannot open another tab to verify loading. Search provider attempts have separate bounded
+deadlines so an unresponsive preferred service yields to the public fallback promptly.
 
 The Hypruse adapter owns a lazy stdio MCP child in the same virtual environment. It checks packages
 and graphical session access, registers live schemas under `hypruse__`, and exposes sanitized

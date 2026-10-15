@@ -13,7 +13,8 @@ without depending on whether the desktop bar or a browser window is open. Thursd
 observed results and keeps durable checkpoints for interrupted work.
 
 **Local process and storage do not mean offline processing.** The default model uses a cloud
-API, Google speech recognition receives recorded audio, and Edge TTS receives response text.
+API, Google speech recognition receives recorded audio, and the default Edge TTS voice receives
+response text. The optional local neural voice runs on the machine.
 Desktop captures and relevant context can reach the configured model during requested tasks.
 See [privacy and data flow](docs/NATIVE_DESKTOP.md#privacy-and-data-flow).
 
@@ -84,15 +85,30 @@ LLM_API_MODE=auto
 LLM_REASONING_EFFORT=low
 OPENAI_API_KEY=your-api-key
 THURSDAY_USER_NAME="Your name"
+THURSDAY_TTS_ENGINE=online
+THURSDAY_TTS_LOCAL_VOICE=bm_george
+THURSDAY_TTS_SPEED=1.0
 THURSDAY_TTS_VOICE=en-GB-RyanNeural
 THURSDAY_TTS_RATE=+0%
 ```
 
-The default voice is a calm British voice at its normal rate. Personal identity, voice, and
+The default speech engine uses Edge's British male `en-GB-RyanNeural`. Edge TTS 7.3.1 or newer
+is required for the updated service handshake. An optional local Kokoro voice provides offline
+synthesis and fallback when installed. Personal identity, voice, and
 provider credentials belong in `.env`; the public configuration uses a generic user name.
 The response style favors concise, natural confirmations and clear failures grounded in tool
 results. `THURSDAY_SYSTEM_PROMPT` can override the base prompt; the shared expression guidance
 is appended by the loader.
+
+Install the optional local neural voice explicitly:
+
+```bash
+.venv/bin/python -m assistant.voice.neural_setup
+```
+
+This optional setup uses an isolated Python 3.13 environment and checksum-verified model/voice files in
+private local storage. It does not require a paid speech API. See the
+[voice setup and recovery guide](docs/NATIVE_DESKTOP.md#natural-voice) for dependencies and controls.
 
 For local model inference, replace the provider values with:
 
@@ -133,6 +149,8 @@ cover the exact layout, service commands, and safe uninstall procedure.
 A recording stops automatically after 55 seconds. The HUD does not take keyboard focus.
 Closing chat keeps the server and keyboard service available. Open the settings menu for
 **Voice on/off**, **Speak typed replies**, **Motion on/off**, and **Full app**.
+The header's **Web app** button and the application menu's **Thursday Web** entry open
+the detailed interface. Repeated launches focus its existing dedicated window.
 
 ### Other launch modes
 
@@ -140,6 +158,7 @@ Closing chat keeps the server and keyboard service available. Open the settings 
 ./run.sh                         # CLI with local HTTP server
 ./run.sh --web                   # Web app
 ./run.sh --web --no-browser      # Foreground server without opening a browser
+./run_web.sh                     # Open/reuse the web app through the installed service
 ./run_with_llm.sh                # Start the installed service and toggle native chat
 ./run_hotkeys.sh                 # Start the installed supervised hotkey service
 ```
@@ -153,7 +172,7 @@ or stop the server when a window closes. For an installed desktop, manage the ba
 | Setting | Location / behavior |
 | --- | --- |
 | Model, endpoint, provider keys | `.env`; see `.env.example` |
-| Name and spoken voice | `THURSDAY_USER_NAME`, `THURSDAY_TTS_VOICE`, `THURSDAY_TTS_RATE` |
+| Name and spoken voice | `THURSDAY_USER_NAME`, `THURSDAY_TTS_ENGINE`, `THURSDAY_TTS_LOCAL_VOICE`, `THURSDAY_TTS_SPEED`; Edge voice/rate when selected |
 | Native preferences | Local `~/.config/thursday/native.json`, respecting `XDG_CONFIG_HOME` |
 | Desktop bridge | `THURSDAY_HYPRUSE=1`; requires the optional packages and live session access |
 | Task budget | `THURSDAY_MAX_TOOL_STEPS=24`, `THURSDAY_TASK_TIMEOUT=300` |
@@ -194,6 +213,11 @@ Calendar writes show a confirmation. Spotify tools select Spotify's own MPRIS pl
 search uses `plocate`; the installed desktop applications and their accessibility support affect
 which integrations are available.
 
+YouTube searches return results without opening tabs. Requests to open a channel use a matching
+result and one explicit `open_url` action; repeated dispatches of the same URL within a task
+reuse its recorded outcome. Slow preferred search providers have bounded attempts before the
+public fallback. A browser launch result confirms dispatch, not that the page finished loading.
+
 In the web app, **Codex Project** accepts a lowercase, hyphenated workspace name, a brief, and an
 optional model identifier. **Refine with Thursday** asks for material missing details;
 **Open Codex in Kitty** launches the contained interactive session. The visible terminal is the
@@ -212,7 +236,7 @@ npm run build
 npm audit
 ```
 
-The native desktop verification baseline is **272 passing Python tests**, with one known
+The native desktop verification baseline is **422 passing Python tests**, with one known
 `aifc` deprecation warning from a dependency. The Vite 7.3.7 production build passes and the
 checked dependency audit reports zero vulnerabilities. This baseline covers controlled fixtures;
 it does not establish successful microphone transcription or spoken playback on every machine.
