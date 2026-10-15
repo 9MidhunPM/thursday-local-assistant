@@ -8,4 +8,3 @@ Terminal=false
 Categories=Utility;
 Keywords=Thursday;Assistant;Web;History;Memory;
 StartupNotify=false
-StartupWMClass=thursday-web
