@@ -31,6 +31,10 @@ def _build_tts(config: AppConfig) -> TextToSpeech | None:
         return EdgeTTS(
             voice=config.voice.tts_voice,
             rate=config.voice.tts_rate,
+            engine=config.voice.tts_engine,
+            local_voice=config.voice.tts_local_voice,
+            speed=config.voice.tts_speed,
+            emergency_fallback=config.voice.tts_emergency_fallback,
         )
     except (FileNotFoundError, ImportError) as e:
         import logging
@@ -75,7 +79,7 @@ class AssistantRuntime:
         if self.llm:
             self.llm.close()
         if self.tts:
-            self.tts.stop()
+            self.tts.close()
 
 
 def build_runtime(config_path: Path | None = None) -> AssistantRuntime:

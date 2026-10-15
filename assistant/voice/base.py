@@ -15,4 +15,7 @@ class TextToSpeech(ABC):
         raise NotImplementedError
 
     def stop(self) -> None:
-        pass
+        return None
+
+    def close(self) -> None:
+        self.stop()

@@ -69,6 +69,10 @@
   },
   "voice": {
     "tts_enabled": true,
+    "tts_engine": "neural",
+    "tts_local_voice": "bm_george",
+    "tts_speed": 1.0,
+    "tts_emergency_fallback": false,
     "tts_voice": "en-GB-RyanNeural",
     "tts_rate": "+0%",
     "stt_enabled": true,

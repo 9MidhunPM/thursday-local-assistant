@@ -153,6 +153,10 @@ class VoiceConfig:
     stt_enabled: bool
     stt_recognizer: str
     stt_language: str
+    tts_engine: str = "neural"
+    tts_local_voice: str = "bm_george"
+    tts_speed: float = 1.0
+    tts_emergency_fallback: bool = False
 
 
 @dataclass(frozen=True)
@@ -365,6 +369,14 @@ def load_config(path: Path) -> AppConfig:
         ),
         voice=VoiceConfig(
             tts_enabled=bool(voice_cfg.get("tts_enabled", True)),
+            tts_engine=os.getenv("THURSDAY_TTS_ENGINE") or str(voice_cfg.get("tts_engine", "neural")),
+            tts_local_voice=os.getenv("THURSDAY_TTS_LOCAL_VOICE") or str(
+                voice_cfg.get("tts_local_voice", "bm_george")
+            ),
+            tts_speed=float(os.getenv("THURSDAY_TTS_SPEED") or voice_cfg.get("tts_speed", 1.0)),
+            tts_emergency_fallback=bool(_env_bool(
+                "THURSDAY_TTS_EMERGENCY_FALLBACK", voice_cfg.get("tts_emergency_fallback", False)
+            )),
             tts_voice=os.getenv("THURSDAY_TTS_VOICE") or str(voice_cfg.get("tts_voice", "en-GB-RyanNeural")),
             tts_rate=os.getenv("THURSDAY_TTS_RATE") or str(voice_cfg.get("tts_rate", "+0%")),
             stt_enabled=bool(voice_cfg.get("stt_enabled", True)),

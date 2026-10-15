@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from assistant.config.loader import load_config
-from assistant.runtime import default_config_path
+from assistant.runtime import _build_tts, default_config_path
 from assistant.voice import EdgeTTS, SpeechRecognitionSTT
 from assistant.voice.base import SpeechToText, TextToSpeech
 
@@ -39,9 +39,25 @@ def test_config_integration():
     assert config.voice.tts_enabled
     assert config.voice.tts_voice == "en-GB-RyanNeural"
     assert config.voice.tts_rate == "+0%"
+    assert config.voice.tts_engine == "neural"
+    assert config.voice.tts_local_voice == "bm_george"
+    assert config.voice.tts_speed == 1.0
+    assert not config.voice.tts_emergency_fallback
     assert config.voice.stt_enabled
     assert config.voice.stt_recognizer == "google"
     assert config.voice.stt_language == "en-US"
+
+
+def test_neural_voice_settings_reach_runtime(monkeypatch):
+    monkeypatch.setenv("THURSDAY_TTS_ENGINE", "neural")
+    monkeypatch.setenv("THURSDAY_TTS_LOCAL_VOICE", "bm_lewis")
+    monkeypatch.setenv("THURSDAY_TTS_SPEED", "0.95")
+    monkeypatch.setenv("THURSDAY_TTS_EMERGENCY_FALLBACK", "false")
+    tts = _build_tts(load_config(default_config_path()))
+    assert tts._engine == "neural"
+    assert tts._local_voice == "bm_lewis"
+    assert tts._speed == 0.95
+    assert not tts._emergency_fallback
 
 
 def test_provider_failure_is_never_transcript():

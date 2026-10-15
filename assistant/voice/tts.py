@@ -10,13 +10,16 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import IntEnum
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from assistant.paths import purge_runtime_files, runtime_dir
+from assistant.paths import private_write, purge_runtime_files, runtime_dir
 from assistant.voice.base import TextToSpeech
 
 if TYPE_CHECKING:
@@ -24,6 +27,7 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger("assistant.voice")
 IDLE_GRACE_SECONDS = 0.2
+CLOUD_RETRY_SECONDS = 300
 
 
 class TTSQueuePriority(IntEnum):
@@ -54,14 +58,27 @@ class EdgeTTS(TextToSpeech):
         on_speak_start: Callable[[], None] | None = None,
         on_speak_end: Callable[[], None] | None = None,
         on_audio_ready: Callable[[str, str], None] | None = None,
+        on_speech_status: Callable[[dict[str, str]], None] | None = None,
+        engine: str = "neural",
+        local_voice: str = "bm_george",
+        speed: float = 1.0,
+        emergency_fallback: bool = False,
     ) -> None:
+        if engine not in {"neural", "online"}:
+            message = "Speech engine must be neural or online."
+            raise ValueError(message)
+        self._engine, self._local_voice = engine, local_voice
+        self._speed, self._emergency_fallback = speed, emergency_fallback
         self._voice, self._rate = voice, rate
         self._volume, self._pitch = volume, pitch
         self._mpv_profile = mpv_profile
-        self._edge_tts_bin = self._find_edge_tts()
+        self._edge_tts_bin = self._find_edge_tts() if engine == "online" else None
         self._lock = threading.RLock()
         self._on_speak_start, self._on_speak_end = on_speak_start, on_speak_end
         self._on_audio_ready = on_audio_ready
+        self._on_speech_status = on_speech_status
+        self._cloud_retry_after = 0.0
+        self._last_status: tuple[int, str] | None = None
         self._speech_queue: queue.PriorityQueue[TTSQueueItem] = queue.PriorityQueue()
         self._queue_active = False
         self._queue_wake = threading.Event()
@@ -70,6 +87,10 @@ class EdgeTTS(TextToSpeech):
         self._generation = 0
         self._syntheses: set[tuple[asyncio.AbstractEventLoop, asyncio.Task]] = set()
         self._playback_process: subprocess.Popen | None = None
+        # Each sentence has its own asyncio loop; this executor belongs to the
+        # backend lifetime and avoids default-executor teardown on every chunk.
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="thursday-speech")
+        self._closed = False
 
     @staticmethod
     def _find_edge_tts() -> str:
@@ -97,25 +118,114 @@ class EdgeTTS(TextToSpeech):
         raise FileNotFoundError(message)
 
     async def _generate(self, text: str, path: Path, generation: int) -> None:
-        import edge_tts  # noqa: PLC0415 - optional speech dependency
-
         loop, task = asyncio.get_running_loop(), asyncio.current_task()
         with self._lock:
-            if generation != self._generation:
+            if self._closed or generation != self._generation:
                 raise asyncio.CancelledError
             active = (loop, task)
             self._syntheses.add(active)
         try:
-            await asyncio.wait_for(
-                edge_tts.Communicate(
-                    text, self._voice, rate=self._rate, volume=self._volume, pitch=self._pitch
-                ).save(str(path)),
-                timeout=60,
-            )
+            with self._lock:
+                try_cloud = (self._engine == "online"
+                             and time.monotonic() >= self._cloud_retry_after)
+            if try_cloud:
+                try:
+                    import edge_tts  # noqa: PLC0415 - optional online speech dependency
+
+                    await asyncio.wait_for(
+                        edge_tts.Communicate(
+                            text, self._voice, rate=self._rate,
+                            volume=self._volume, pitch=self._pitch,
+                        ).save(str(path)),
+                        timeout=8,
+                    )
+                except Exception:
+                    path.unlink(missing_ok=True)
+                    with self._lock:
+                        self._cloud_retry_after = time.monotonic() + CLOUD_RETRY_SECONDS
+                    _log.warning("Online speech unavailable; attempting local speech.")
+                else:
+                    path.chmod(0o600)
+                    self._status(generation, "ready", "")
+                    return
+            emergency = False
+            try:
+                await self._generate_local(
+                    text, path, voice=self._local_voice, speed=self._speed,
+                    executor=self._executor,
+                )
+            except Exception:
+                if not self._emergency_fallback:
+                    raise
+                await self._generate_local(text, path, emergency=True, executor=self._executor)
+                emergency = True
             path.chmod(0o600)
+            if emergency:
+                self._status(
+                    generation, "fallback",
+                    "Natural speech is unavailable. The optional basic voice is in use.",
+                )
+            elif self._engine == "online":
+                self._status(
+                    generation, "fallback",
+                    "Online voice is unavailable. I'm using the local neural voice.",
+                )
+            else:
+                self._status(generation, "ready", "")
         finally:
             with self._lock:
                 self._syntheses.discard(active)
+
+    def _status(self, generation: int, state: str, message: str) -> None:
+        with self._lock:
+            if generation != self._generation or self._last_status == (generation, state):
+                return
+            self._last_status = (generation, state)
+            if self._on_speech_status:
+                self._on_speech_status({"state": state, "message": message})
+
+    @staticmethod
+    async def _generate_local(
+        text: str, path: Path, *, voice: str = "bm_george", speed: float = 1.0,
+        emergency: bool = False,
+        executor: ThreadPoolExecutor | None = None,
+    ) -> None:
+        if emergency:
+            from assistant.voice.local_tts import synthesize_wav  # noqa: PLC0415
+        else:
+            from assistant.voice.neural_tts import synthesize_wav  # noqa: PLC0415
+
+        decoder = shutil.which("ffmpeg")
+        if not decoder:
+            message = "Local speech requires ffmpeg"
+            raise RuntimeError(message)
+        cancelled = threading.Event()
+        process = None
+        worker_pool = executor or ThreadPoolExecutor(max_workers=1)
+        try:
+            options = {} if emergency else {"voice": voice, "speed": speed}
+            wav = await asyncio.get_running_loop().run_in_executor(
+                worker_pool, partial(synthesize_wav, text, cancelled=cancelled, **options),
+            )
+            process = await asyncio.create_subprocess_exec(
+                decoder, "-nostdin", "-v", "error", "-i", "pipe:0",
+                "-vn", "-f", "mp3", "-q:a", "4", "pipe:1",
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            audio, _ = await asyncio.wait_for(process.communicate(wav), timeout=15)
+            if process.returncode or not audio:
+                message = "Local speech encoding failed"
+                raise RuntimeError(message)
+            private_write(path, audio)
+        finally:
+            cancelled.set()
+            if executor is None:
+                worker_pool.shutdown(wait=False, cancel_futures=True)
+            if process is not None and process.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    process.kill()
+                await process.wait()
 
     def synthesize(self, text: str, output_path: str) -> None:
         """Synthesize without exposing private speech in process arguments."""
@@ -184,11 +294,23 @@ class EdgeTTS(TextToSpeech):
                     self._playback_process.terminate()
                 self._playback_process = None
 
+    def close(self) -> None:
+        """Stop speech and release the persistent synthesis resources."""
+        with self._lock:
+            self._closed = True
+        self.stop()
+        self._executor.shutdown(wait=False, cancel_futures=True)
+        from assistant.voice.neural_tts import close_worker  # noqa: PLC0415
+
+        close_worker()
+
     def speak_async(self, text: str, priority: TTSQueuePriority = TTSQueuePriority.NORMAL) -> None:
         clean_text = self._clean_text(text)
         if not clean_text:
             return
         with self._lock:
+            if self._closed:
+                return
             self._speech_queue.put(TTSQueueItem(-priority.value, next(self._sequence), clean_text))
             self._queue_wake.set()
             self._ensure_queue_processor()
@@ -247,6 +369,12 @@ class EdgeTTS(TextToSpeech):
                 except Exception:
                     path.unlink(missing_ok=True)
                     _log.warning("Speech synthesis failed; retry or check the speech connection.")
+                    self._status(
+                        generation, "unavailable",
+                        "Natural speech is unavailable. Run python -m assistant.voice.neural_setup "
+                        "and check that ffmpeg is installed. "
+                        "The response is still available as text.",
+                    )
                     continue
                 with self._lock:
                     if generation != self._generation:

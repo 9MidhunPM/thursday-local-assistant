@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import assistant.voice.neural_tts as neural_module
 import assistant.voice.tts as tts_module
 from assistant.voice.tts import EdgeTTS, TTSQueuePriority
 
@@ -26,11 +27,12 @@ def until(predicate):
 
 @pytest.fixture
 def speech(monkeypatch, tmp_path):
-    started, audio, lifecycle = [], [], []
+    started, audio, lifecycle, statuses, local_started = [], [], [], [], []
     holds: dict[str, threading.Event] = {}
     cancelled = threading.Event()
     failures: set[str] = set()
     resist_cancel: set[str] = set()
+    local_enabled = set()
 
     class Communicate:
         def __init__(self, text, _voice, **_settings):
@@ -56,15 +58,27 @@ def speech(monkeypatch, tmp_path):
     monkeypatch.setattr(EdgeTTS, "_find_edge_tts", staticmethod(lambda: "fixture-edge-tts"))
     monkeypatch.setattr(tts_module, "runtime_dir", lambda _name: tmp_path)
     monkeypatch.setattr(tts_module, "IDLE_GRACE_SECONDS", 0.02)
+
+    async def local(text, path, **_kwargs):
+        local_started.append(text)
+        if text not in local_enabled:
+            message = "synthetic private local provider failure"
+            raise RuntimeError(message)
+        path.write_bytes(b"synthetic local mp3 fixture")
+
+    monkeypatch.setattr(EdgeTTS, "_generate_local", staticmethod(local))
     tts = EdgeTTS(
+        engine="online",
         on_speak_start=lambda: lifecycle.append("start"),
         on_speak_end=lambda: lifecycle.append("end"),
         on_audio_ready=lambda filename, text: audio.append((filename, text)),
+        on_speech_status=statuses.append,
     )
     yield SimpleNamespace(
         tts=tts, started=started, audio=audio, lifecycle=lifecycle,
         holds=holds, failures=failures, cancelled=cancelled,
         resist_cancel=resist_cancel, directory=tmp_path,
+        local_started=local_started, local_enabled=local_enabled, statuses=statuses,
     )
     tts.stop()
     for release in holds.values():
@@ -180,6 +194,165 @@ def test_synthesis_failure_does_not_leave_active_state_or_log_provider_content(s
     assert speech.audio == []
     assert "private provider" not in caplog.text
     assert list(speech.directory.glob("*.mp3")) == []
+    assert speech.statuses[-1]["state"] == "unavailable"
+
+
+def test_cloud_rejection_uses_local_speech_and_cools_down_subsequent_chunks(speech):
+    speech.failures.add("First cloud rejection")
+    speech.local_enabled.update({"First cloud rejection", "Next sentence"})
+    speech.tts.speak_async("First cloud rejection")
+    speech.tts.speak_async("Next sentence")
+    until(lambda: not speech.tts._queue_active)
+    assert speech.started == ["First cloud rejection"]
+    assert speech.local_started == ["First cloud rejection", "Next sentence"]
+    assert [text for _, text in speech.audio] == ["First cloud rejection", "Next sentence"]
+    assert [status["state"] for status in speech.statuses] == ["fallback"]
+    assert speech.lifecycle == ["start", "end"]
+
+
+def test_cloud_is_retried_after_cooldown_and_clears_fallback_status(speech):
+    speech.failures.add("Temporarily rejected")
+    speech.local_enabled.add("Temporarily rejected")
+    speech.tts.speak_async("Temporarily rejected")
+    until(lambda: not speech.tts._queue_active)
+    speech.tts._cloud_retry_after = 0
+    speech.tts.speak_async("Provider recovered")
+    until(lambda: len(speech.audio) == 2 and not speech.tts._queue_active)
+    assert speech.started == ["Temporarily rejected", "Provider recovered"]
+    assert [status["state"] for status in speech.statuses] == ["fallback", "ready"]
+
+
+def test_neural_is_default_without_online_dependency_probe(monkeypatch):
+    def unavailable():
+        message = "Online dependency must not be probed for local speech"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(EdgeTTS, "_find_edge_tts", staticmethod(unavailable))
+    tts = EdgeTTS()
+    assert tts._engine == "neural"
+    assert tts._local_voice == "bm_george"
+    assert not tts._emergency_fallback
+
+
+def test_close_releases_own_executor_without_poisoning_next_instance(monkeypatch):
+    closed = []
+    monkeypatch.setattr(neural_module, "close_worker", lambda: closed.append(True))
+    first = EdgeTTS()
+    first.close()
+    first.speak_async("Must not be queued after close")
+    assert first._speech_queue.empty()
+    assert first._executor._shutdown
+    second = EdgeTTS()
+    assert second._executor.submit(lambda: "ready").result(timeout=1) == "ready"
+    second.close()
+    assert closed == [True, True]
+
+
+def test_neural_default_skips_cloud_and_reports_ready(speech):
+    speech.tts._engine = "neural"
+    speech.local_enabled.add("Natural local speech")
+    speech.tts.speak_async("Natural local speech")
+    until(lambda: not speech.tts._queue_active)
+    assert speech.started == []
+    assert speech.local_started == ["Natural local speech"]
+    assert [status["state"] for status in speech.statuses] == ["ready"]
+
+
+@pytest.mark.parametrize("opt_in", [False, True])
+def test_basic_robotic_voice_requires_explicit_opt_in(speech, monkeypatch, opt_in):
+    speech.tts._engine = "neural"
+    speech.tts._emergency_fallback = opt_in
+    calls = []
+
+    async def local(_text, path, *, emergency=False, **_kwargs):
+        calls.append(emergency)
+        if not emergency:
+            message = "Private neural failure payload"
+            raise RuntimeError(message)
+        path.write_bytes(b"emergency fixture")
+
+    monkeypatch.setattr(EdgeTTS, "_generate_local", staticmethod(local))
+    speech.tts.speak_async("Fixture")
+    until(lambda: not speech.tts._queue_active)
+    assert speech.started == []
+    if opt_in:
+        assert calls == [False, True]
+        assert len(speech.audio) == 1
+        assert speech.statuses[-1]["state"] == "fallback"
+        assert "optional basic voice" in speech.statuses[-1]["message"]
+    else:
+        assert calls == [False]
+        assert speech.audio == []
+        assert speech.statuses[-1]["state"] == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_local_encoding_uses_pipes_and_private_output(monkeypatch, tmp_path):
+    calls = []
+
+    class Encoder:
+        returncode = 0
+
+        async def communicate(self, wav):
+            assert wav == b"synthetic wav"
+            return b"synthetic mp3", b""
+
+    async def create(*args, **_kwargs):
+        calls.append(args)
+        return Encoder()
+
+    monkeypatch.setitem(sys.modules, "assistant.voice.neural_tts", SimpleNamespace(
+        synthesize_wav=lambda _text, **_kwargs: b"synthetic wav",
+    ))
+    monkeypatch.setattr(tts_module.shutil, "which", lambda _name: "ffmpeg")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    path = tmp_path / "speech.mp3"
+    await EdgeTTS._generate_local("private spoken text", path)
+    assert asyncio.get_running_loop()._default_executor is None
+    assert path.read_bytes() == b"synthetic mp3"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert "private spoken text" not in repr(calls)
+    assert "pipe:0" in calls[0]
+    assert "pipe:1" in calls[0]
+
+
+@pytest.mark.asyncio
+async def test_cancel_local_synthesis_signals_worker_without_starting_encoder(
+    monkeypatch, tmp_path,
+):
+    entered, finished = threading.Event(), threading.Event()
+
+    def synthesize(_text, *, cancelled, **_kwargs):
+        entered.set()
+        cancelled.wait(2)
+        if cancelled.is_set():
+            finished.set()
+        return b"synthetic wav"
+
+    async def create(*_args, **_kwargs):
+        message = "Cancelled synthesis must not reach the encoder"
+        raise AssertionError(message)
+
+    monkeypatch.setitem(sys.modules, "assistant.voice.neural_tts", SimpleNamespace(
+        synthesize_wav=synthesize,
+    ))
+    monkeypatch.setattr(tts_module.shutil, "which", lambda _name: "ffmpeg")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    task = asyncio.create_task(EdgeTTS._generate_local("Fixture", tmp_path / "speech.mp3"))
+    for _ in range(200):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.005)
+    assert entered.is_set()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    for _ in range(200):
+        if finished.is_set():
+            break
+        await asyncio.sleep(0.005)
+    assert finished.is_set()
+    assert not (tmp_path / "speech.mp3").exists()
 
 
 @pytest.mark.parametrize(("source", "expected"), [
