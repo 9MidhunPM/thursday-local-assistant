@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import IntEnum
 from functools import partial
+from importlib import metadata
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -28,6 +29,29 @@ if TYPE_CHECKING:
 _log = logging.getLogger("assistant.voice")
 IDLE_GRACE_SECONDS = 0.2
 CLOUD_RETRY_SECONDS = 300
+TRANSIENT_RETRY_SECONDS = 15
+
+
+def _provider_failure(error: Exception) -> str:
+    """Return diagnostics without provider messages, request URLs, or speech."""
+    if isinstance(error, TimeoutError):
+        return "timeout"
+    status = getattr(error, "status", None)
+    if isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 599:
+        return f"http_{status}"
+    name = type(error).__name__
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", name):
+        return name
+    return "provider_error"
+
+
+def _provider_retry_seconds(error: Exception) -> int:
+    status = getattr(error, "status", None)
+    if status in {401, 403}:
+        return CLOUD_RETRY_SECONDS
+    if status == 429:
+        return 60
+    return TRANSIENT_RETRY_SECONDS
 
 
 class TTSQueuePriority(IntEnum):
@@ -59,7 +83,7 @@ class EdgeTTS(TextToSpeech):
         on_speak_end: Callable[[], None] | None = None,
         on_audio_ready: Callable[[str, str], None] | None = None,
         on_speech_status: Callable[[dict[str, str]], None] | None = None,
-        engine: str = "neural",
+        engine: str = "online",
         local_voice: str = "bm_george",
         speed: float = 1.0,
         emergency_fallback: bool = False,
@@ -94,6 +118,16 @@ class EdgeTTS(TextToSpeech):
 
     @staticmethod
     def _find_edge_tts() -> str:
+        guidance = (
+            "Online speech requires edge-tts>=7.3.1,<8. "
+            "Upgrade with: python -m pip install 'edge-tts>=7.3.1,<8'."
+        )
+        try:
+            version = tuple(int(part) for part in metadata.version("edge-tts").split("."))
+        except (metadata.PackageNotFoundError, ValueError):
+            raise FileNotFoundError(guidance) from None
+        if not (7, 3, 1) <= version < (8,):
+            raise FileNotFoundError(guidance)
         candidates = [
             str(Path(sys.executable).parent / "edge-tts"),
             shutil.which("edge-tts"),
@@ -114,8 +148,7 @@ class EdgeTTS(TextToSpeech):
                     return candidate
             except (OSError, subprocess.SubprocessError):
                 continue
-        message = "edge-tts not found or not functional. Install it via: pip install edge-tts"
-        raise FileNotFoundError(message)
+        raise FileNotFoundError(guidance)
 
     async def _generate(self, text: str, path: Path, generation: int) -> None:
         loop, task = asyncio.get_running_loop(), asyncio.current_task()
@@ -129,6 +162,7 @@ class EdgeTTS(TextToSpeech):
                 try_cloud = (self._engine == "online"
                              and time.monotonic() >= self._cloud_retry_after)
             if try_cloud:
+                online_started = time.monotonic()
                 try:
                     import edge_tts  # noqa: PLC0415 - optional online speech dependency
 
@@ -139,12 +173,23 @@ class EdgeTTS(TextToSpeech):
                         ).save(str(path)),
                         timeout=8,
                     )
-                except Exception:
+                except Exception as error:
+                    received_bytes = path.stat().st_size if path.is_file() else 0
                     path.unlink(missing_ok=True)
+                    retry_seconds = _provider_retry_seconds(error)
                     with self._lock:
-                        self._cloud_retry_after = time.monotonic() + CLOUD_RETRY_SECONDS
-                    _log.warning("Online speech unavailable; attempting local speech.")
+                        self._cloud_retry_after = time.monotonic() + retry_seconds
+                    _log.warning(
+                        "Online speech unavailable "
+                        "(%s, elapsed_ms=%d, received_bytes=%d, retry_after_s=%d); "
+                        "attempting local speech.",
+                        _provider_failure(error),
+                        round((time.monotonic() - online_started) * 1000),
+                        received_bytes,
+                        retry_seconds,
+                    )
                 else:
+                    await self._encode_audio(path.read_bytes(), path)
                     path.chmod(0o600)
                     self._status(generation, "ready", "")
                     return
@@ -200,28 +245,40 @@ class EdgeTTS(TextToSpeech):
             message = "Local speech requires ffmpeg"
             raise RuntimeError(message)
         cancelled = threading.Event()
-        process = None
         worker_pool = executor or ThreadPoolExecutor(max_workers=1)
         try:
             options = {} if emergency else {"voice": voice, "speed": speed}
             wav = await asyncio.get_running_loop().run_in_executor(
                 worker_pool, partial(synthesize_wav, text, cancelled=cancelled, **options),
             )
-            process = await asyncio.create_subprocess_exec(
-                decoder, "-nostdin", "-v", "error", "-i", "pipe:0",
-                "-vn", "-f", "mp3", "-q:a", "4", "pipe:1",
-                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            audio, _ = await asyncio.wait_for(process.communicate(wav), timeout=15)
-            if process.returncode or not audio:
-                message = "Local speech encoding failed"
-                raise RuntimeError(message)
-            private_write(path, audio)
+            await EdgeTTS._encode_audio(wav, path)
         finally:
             cancelled.set()
             if executor is None:
                 worker_pool.shutdown(wait=False, cancel_futures=True)
+
+    @staticmethod
+    async def _encode_audio(source: bytes, path: Path) -> None:
+        """Normalize each speech clip without changing system or application gain."""
+        decoder = shutil.which("ffmpeg")
+        if not decoder:
+            message = "Speech processing requires ffmpeg"
+            raise RuntimeError(message)
+        process = None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                decoder, "-nostdin", "-v", "error", "-i", "pipe:0",
+                "-vn", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+                "-ar", "24000", "-f", "mp3", "-q:a", "4", "pipe:1",
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            audio, _ = await asyncio.wait_for(process.communicate(source), timeout=15)
+            if process.returncode or not audio:
+                message = "Speech encoding failed"
+                raise RuntimeError(message)
+            private_write(path, audio)
+        finally:
             if process is not None and process.returncode is None:
                 with contextlib.suppress(ProcessLookupError):
                     process.kill()

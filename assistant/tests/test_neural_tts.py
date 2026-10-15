@@ -160,7 +160,7 @@ def test_timeout_kills_worker(worker):
 ])
 def test_invalid_request_never_launches_worker(worker, text, voice, speed):
     instance, commands = worker
-    with pytest.raises(ValueError, match=r"Neural speech|supported British"):
+    with pytest.raises(ValueError, match=r"Neural speech|supported neural"):
         instance.synthesize(text, voice=voice, speed=speed)
     assert commands == []
 
@@ -171,3 +171,9 @@ def test_invalid_audio_rejected():
     header = b"RIFF" + struct.pack("<I", 36) + b"WAVE"
     with pytest.raises(RuntimeError, match="invalid audio"):
         neural_tts._validate_wav(header)
+
+
+def test_supported_voice_uses_matching_phoneme_language():
+    assert neural_tts.VOICE_LANGUAGES["bm_george"] == "en-gb"
+    assert neural_tts.VOICE_LANGUAGES["am_michael"] == "en-us"
+    neural_tts._validate("A natural comparison sentence.", "am_michael", 1.1)

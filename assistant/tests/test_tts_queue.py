@@ -67,6 +67,11 @@ def speech(monkeypatch, tmp_path):
         path.write_bytes(b"synthetic local mp3 fixture")
 
     monkeypatch.setattr(EdgeTTS, "_generate_local", staticmethod(local))
+
+    async def encode(source, path):
+        path.write_bytes(source)
+
+    monkeypatch.setattr(EdgeTTS, "_encode_audio", staticmethod(encode))
     tts = EdgeTTS(
         engine="online",
         on_speak_start=lambda: lifecycle.append("start"),
@@ -195,6 +200,34 @@ def test_synthesis_failure_does_not_leave_active_state_or_log_provider_content(s
     assert "private provider" not in caplog.text
     assert list(speech.directory.glob("*.mp3")) == []
     assert speech.statuses[-1]["state"] == "unavailable"
+    assert "RuntimeError" in caplog.text
+    assert "elapsed_ms=" in caplog.text
+
+
+@pytest.mark.parametrize(("error", "expected"), [
+    (TimeoutError("private text https://private.invalid/token"), "timeout"),
+    (ConnectionError("private credentials"), "ConnectionError"),
+])
+def test_provider_failure_classification_omits_private_payload(error, expected):
+    assert tts_module._provider_failure(error) == expected
+
+
+def test_provider_failure_classification_prefers_only_http_status():
+    class ProviderError(Exception):
+        status = 403
+
+    assert tts_module._provider_failure(ProviderError("private response payload")) == "http_403"
+
+
+@pytest.mark.parametrize(("status", "expected"), [(401, 300), (403, 300), (429, 60), (503, 15)])
+def test_provider_retry_delay_depends_on_failure_type(status, expected):
+    error = RuntimeError("private payload")
+    error.status = status
+    assert tts_module._provider_retry_seconds(error) == expected
+
+
+def test_transient_timeout_does_not_disable_online_voice_for_five_minutes():
+    assert tts_module._provider_retry_seconds(TimeoutError("private payload")) == 15
 
 
 def test_cloud_rejection_uses_local_speech_and_cools_down_subsequent_chunks(speech):
@@ -222,27 +255,53 @@ def test_cloud_is_retried_after_cooldown_and_clears_fallback_status(speech):
     assert [status["state"] for status in speech.statuses] == ["fallback", "ready"]
 
 
-def test_neural_is_default_without_online_dependency_probe(monkeypatch):
+def test_processing_failure_does_not_mark_healthy_online_provider_unavailable(speech, monkeypatch):
+    async def broken_encoder(_source, _path):
+        message = "Fixture encoder failed"
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(EdgeTTS, "_encode_audio", staticmethod(broken_encoder))
+    speech.tts.speak_async("Provider succeeds")
+    until(lambda: not speech.tts._queue_active)
+    assert speech.started == ["Provider succeeds"]
+    assert speech.local_started == []
+    assert speech.tts._cloud_retry_after == 0
+    assert speech.statuses[-1]["state"] == "unavailable"
+
+
+def test_explicit_neural_skips_online_dependency_probe(monkeypatch):
     def unavailable():
         message = "Online dependency must not be probed for local speech"
         raise AssertionError(message)
 
     monkeypatch.setattr(EdgeTTS, "_find_edge_tts", staticmethod(unavailable))
-    tts = EdgeTTS()
+    tts = EdgeTTS(engine="neural")
     assert tts._engine == "neural"
     assert tts._local_voice == "bm_george"
     assert not tts._emergency_fallback
 
 
+def test_online_is_default_and_uses_dependency_preflight(monkeypatch):
+    probes = []
+    monkeypatch.setattr(
+        EdgeTTS, "_find_edge_tts", staticmethod(lambda: probes.append(True) or "fixture"),
+    )
+    tts = EdgeTTS()
+    assert tts._engine == "online"
+    assert tts._voice == "en-GB-RyanNeural"
+    assert tts._rate == "+0%"
+    assert probes == [True]
+
+
 def test_close_releases_own_executor_without_poisoning_next_instance(monkeypatch):
     closed = []
     monkeypatch.setattr(neural_module, "close_worker", lambda: closed.append(True))
-    first = EdgeTTS()
+    first = EdgeTTS(engine="neural")
     first.close()
     first.speak_async("Must not be queued after close")
     assert first._speech_queue.empty()
     assert first._executor._shutdown
-    second = EdgeTTS()
+    second = EdgeTTS(engine="neural")
     assert second._executor.submit(lambda: "ready").result(timeout=1) == "ready"
     second.close()
     assert closed == [True, True]
@@ -314,6 +373,7 @@ async def test_local_encoding_uses_pipes_and_private_output(monkeypatch, tmp_pat
     assert "private spoken text" not in repr(calls)
     assert "pipe:0" in calls[0]
     assert "pipe:1" in calls[0]
+    assert "loudnorm=I=-16:TP=-1.5:LRA=11" in calls[0]
 
 
 @pytest.mark.asyncio

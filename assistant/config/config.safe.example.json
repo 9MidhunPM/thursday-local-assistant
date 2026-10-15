@@ -36,7 +36,7 @@
   },
   "voice": {
     "tts_enabled": true,
-    "tts_engine": "neural",
+    "tts_engine": "online",
     "tts_local_voice": "bm_george",
     "tts_speed": 1.0,
     "tts_emergency_fallback": false,

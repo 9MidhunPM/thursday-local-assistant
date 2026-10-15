@@ -22,24 +22,48 @@ def test_edge_tts_importable():
     assert issubclass(EdgeTTS, TextToSpeech)
 
 
+@patch("assistant.voice.tts.metadata.version", return_value="7.3.1")
 @patch("assistant.voice.tts.subprocess.run")
-def test_edge_tts_startup_probe_is_local_version_check(run):
-    run.return_value = subprocess.CompletedProcess([], 0, stdout="edge-tts 7.2.8", stderr="")
+def test_edge_tts_startup_probe_is_local_version_check(run, version_metadata):
+    run.return_value = subprocess.CompletedProcess([], 0, stdout="edge-tts 7.3.1", stderr="")
     binary = EdgeTTS._find_edge_tts()
     assert binary.endswith("edge-tts")
     assert run.call_args.args[0][-1] == "--version"
+    version_metadata.assert_called_once_with("edge-tts")
+
+
+@pytest.mark.parametrize("version", ["7.2.8", "7.3.0", "8.0.0", "7.3.1rc0"])
+def test_edge_tts_rejects_incompatible_handshake_version(monkeypatch, version):
+    monkeypatch.setattr("assistant.voice.tts.metadata.version", lambda _name: version)
+    with pytest.raises(FileNotFoundError, match=r"edge-tts>=7\.3\.1,<8"):
+        EdgeTTS(engine="online")
+
+
+def test_neural_engine_can_run_without_installed_online_package(monkeypatch):
+    def missing(_name):
+        message = "Online package metadata must not be inspected for local speech"
+        raise AssertionError(message)
+
+    monkeypatch.setattr("assistant.voice.tts.metadata.version", missing)
+    assert EdgeTTS(engine="neural")._engine == "neural"
 
 
 def test_speech_recognition_stt_importable():
     assert issubclass(SpeechRecognitionSTT, SpeechToText)
 
 
-def test_config_integration():
+def test_config_integration(monkeypatch):
+    # Public defaults must not depend on private settings loaded by runtime tests.
+    for name in (
+        "THURSDAY_TTS_ENGINE", "THURSDAY_TTS_VOICE", "THURSDAY_TTS_RATE",
+        "THURSDAY_TTS_LOCAL_VOICE", "THURSDAY_TTS_SPEED", "THURSDAY_TTS_EMERGENCY_FALLBACK",
+    ):
+        monkeypatch.delenv(name, raising=False)
     config = load_config(default_config_path())
     assert config.voice.tts_enabled
     assert config.voice.tts_voice == "en-GB-RyanNeural"
     assert config.voice.tts_rate == "+0%"
-    assert config.voice.tts_engine == "neural"
+    assert config.voice.tts_engine == "online"
     assert config.voice.tts_local_voice == "bm_george"
     assert config.voice.tts_speed == 1.0
     assert not config.voice.tts_emergency_fallback

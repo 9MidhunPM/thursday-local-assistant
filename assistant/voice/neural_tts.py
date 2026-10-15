@@ -30,14 +30,14 @@ MAX_REQUEST_BYTES = 65536
 MAX_AUDIO_BYTES = 6_000_000
 MAX_AUDIO_SECONDS = 120
 REQUEST_TIMEOUT_SECONDS = 45.0
-VOICES = frozenset({"bm_george", "bm_lewis"})
+VOICE_LANGUAGES = {"bm_george": "en-gb", "bm_lewis": "en-gb", "am_michael": "en-us"}
 
 
 def _validate(text: str, voice: str, speed: float) -> None:
     if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS:
         raise ValueError("Neural speech text is empty or too long.")
-    if voice not in VOICES:
-        raise ValueError("Choose a supported British neural voice.")
+    if voice not in VOICE_LANGUAGES:
+        raise ValueError("Choose a supported neural voice.")
     if (isinstance(speed, bool) or not isinstance(speed, (int, float))
             or not math.isfinite(speed) or not 0.8 <= speed <= 1.2):
         raise ValueError("Neural speech speed must be between 0.8 and 1.2.")
@@ -214,7 +214,9 @@ def synthesize_wav(
 
 def _render(engine, np, text: str, voice: str, speed: float) -> bytes:
     _validate(text, voice, speed)
-    samples, sample_rate = engine.create(text, voice=voice, speed=speed, lang="en-gb")
+    samples, sample_rate = engine.create(
+        text, voice=voice, speed=speed, lang=VOICE_LANGUAGES[voice],
+    )
     if (sample_rate != 24000 or samples.ndim != 1
             or not 0 < len(samples) <= MAX_AUDIO_SECONDS * 24000
             or not np.isfinite(samples).all() or not np.any(samples)):

@@ -153,7 +153,7 @@ class VoiceConfig:
     stt_enabled: bool
     stt_recognizer: str
     stt_language: str
-    tts_engine: str = "neural"
+    tts_engine: str = "online"
     tts_local_voice: str = "bm_george"
     tts_speed: float = 1.0
     tts_emergency_fallback: bool = False
@@ -369,7 +369,7 @@ def load_config(path: Path) -> AppConfig:
         ),
         voice=VoiceConfig(
             tts_enabled=bool(voice_cfg.get("tts_enabled", True)),
-            tts_engine=os.getenv("THURSDAY_TTS_ENGINE") or str(voice_cfg.get("tts_engine", "neural")),
+            tts_engine=os.getenv("THURSDAY_TTS_ENGINE") or str(voice_cfg.get("tts_engine", "online")),
             tts_local_voice=os.getenv("THURSDAY_TTS_LOCAL_VOICE") or str(
                 voice_cfg.get("tts_local_voice", "bm_george")
             ),
