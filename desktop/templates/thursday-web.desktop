@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Thursday Web
+Comment=Open Thursday history, memory, tasks and project controls
+Exec=bash @WEB_SCRIPT_DESKTOP@
+Icon=web-browser
+Terminal=false
+Categories=Utility;
+Keywords=Thursday;Assistant;Web;History;Memory;
+StartupNotify=false
+StartupWMClass=thursday-web

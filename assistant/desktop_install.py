@@ -31,6 +31,7 @@ _ALLOWED = {
         "systemd/user/thursday-hotkeys.service",
         "thursday/session-start.sh",
         "thursday/open.sh",
+        "thursday/web.sh",
         "quickshell/ThursdayNative",
         "quickshell/shell.qml",
         "quickshell/Bar.qml",
@@ -42,7 +43,7 @@ _ALLOWED = {
         "hypr/scripts/thursday-server.sh",
         "hypr/scripts/thursday-toggle.sh",
     },
-    "data": {"applications/thursday.desktop"},
+    "data": {"applications/thursday.desktop", "applications/thursday-web.desktop"},
 }
 
 
@@ -88,6 +89,15 @@ def _systemd_directory(path):
     if not Path(value).is_absolute() or any(character in value for character in "\n\r\0"):
         raise InstallError("unsafe_path")
     return value.replace("%", "%%")
+
+
+def _desktop_exec_argument(path):
+    """Apply both desktop-entry string escaping and Exec argument quoting."""
+    value = str(path)
+    if any(character in value for character in "\n\r\0="):
+        raise InstallError("unsafe_path")
+    value = re.sub(r'([\\"`$])', r"\\\1", value).replace("%", "%%")
+    return '"' + value.replace("\\", "\\\\") + '"'
 
 
 def _without_block(text, label, comment):
@@ -268,6 +278,15 @@ class DesktopInstaller:
                     0o700,
                 ),
                 Change("config", "thursday/open.sh", "file", self._launcher("focus"), 0o700),
+                Change(
+                    "config",
+                    "thursday/web.sh",
+                    "file",
+                    "#!/usr/bin/env bash\nset -euo pipefail\nexec "
+                    + shlex.quote(str(self.repo / ".venv/bin/python3"))
+                    + " -m assistant.web_launch\n",
+                    0o700,
+                ),
                 Change("config", "quickshell/ThursdayNative", "symlink", str(module)),
                 Change(
                     "config", "quickshell/shell.qml", "file", _shell(shell, self.repo, theme=theme)
@@ -298,6 +317,17 @@ class DesktopInstaller:
                 "applications/thursday.desktop",
                 "file",
                 self._template("thursday.desktop"),
+            )
+        )
+        changes.append(
+            Change(
+                "data",
+                "applications/thursday-web.desktop",
+                "file",
+                self._template("thursday-web.desktop").replace(
+                    "@WEB_SCRIPT_DESKTOP@",
+                    _desktop_exec_argument(self.roots["config"] / "thursday/web.sh"),
+                ),
             )
         )
         return changes

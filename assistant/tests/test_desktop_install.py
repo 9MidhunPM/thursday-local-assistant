@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -134,6 +136,48 @@ def test_alt_space_installs_a_repeatable_chat_toggle(desktop):
         bindings = (desktop.config / "hypr/config/keybinds.lua").read_text()
         assert expected in bindings
         assert bindings.count('hl.bind("ALT + SPACE"') == 1
+
+
+def test_web_app_launcher_is_installed_and_removed_with_managed_files(desktop):
+    desktop.installer.install(no_start=True)
+    entry = desktop.data / "applications/thursday-web.desktop"
+    wrapper = desktop.config / "thursday/web.sh"
+    assert "Name=Thursday Web" in entry.read_text()
+    assert "assistant.web_launch" in wrapper.read_text()
+    assert shlex.quote(str(desktop.repo / ".venv/bin/python3")) in wrapper.read_text()
+    assert stat.S_IMODE(wrapper.stat().st_mode) == 0o700
+    desktop.installer.uninstall(no_start=True)
+    assert not entry.exists()
+    assert not wrapper.exists()
+
+
+def test_web_desktop_entry_launches_from_a_config_path_with_reserved_characters(desktop):
+    gio = shutil.which("gio")
+    if not gio:
+        pytest.skip("GIO launcher is unavailable")
+    config = desktop.base / 'config space $cash `tick "quote \\slash %percent'
+    desktop.config.rename(config)
+    installer = DesktopInstaller(
+        repo_root=desktop.repo,
+        config_home=config,
+        state_home=desktop.state,
+        data_home=desktop.data,
+        runner=desktop.runner,
+    )
+    output = desktop.base / "launched-arguments"
+    executable = desktop.repo / ".venv/bin/python3"
+    executable.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shlex.quote(str(output)) + "\n")
+    installer.install(no_start=True)
+    subprocess.run(
+        [gio, "launch", str(desktop.data / "applications/thursday-web.desktop")],
+        capture_output=True,
+        timeout=5,
+        check=True,
+    )
+    deadline = time.monotonic() + 3
+    while not output.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert output.read_text().splitlines() == ["-m", "assistant.web_launch"]
 
 
 def test_install_is_surgical_private_and_repeatable(desktop):
