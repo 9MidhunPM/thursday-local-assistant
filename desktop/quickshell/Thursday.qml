@@ -57,7 +57,25 @@ Scope {
     property string generation: ""
     property var retiredGenerations: []
     property bool speechPreparing: false
-    readonly property bool speaking: player.playbackState === MediaPlayer.PlayingState
+    property string speechNotice: ""
+    property string speechError: ""
+    property int playbackPosition: 0
+    property string reportedPlayingAudio: ""
+    property var nativeOutput: ({known: false, audible: false, node_ids: [], reason: "checking"})
+    readonly property var audioEnvelope: playingAudio ? playingAudio.audio_levels || null : null
+    readonly property bool playbackRunning: !!playingAudio && !muted && output.volume > 0
+        && player.playbackState === MediaPlayer.PlayingState && player.hasAudio
+        && player.error === MediaPlayer.NoError && devices.audioOutputs.length > 0
+        && [MediaPlayer.LoadedMedia, MediaPlayer.BufferingMedia, MediaPlayer.BufferedMedia].indexOf(player.mediaStatus) >= 0
+    readonly property bool speaking: playbackRunning && nativeOutput.known === true && nativeOutput.audible === true
+    readonly property string outputNotice: {
+        if (!playingAudio || !playbackRunning || speaking) return ""
+        if (nativeOutput.reason === "muted") return "Thursday's system audio stream is muted. Check your sound settings."
+        if (nativeOutput.reason === "volume_zero") return "Thursday's system audio volume is at zero. Check your sound settings."
+        if (nativeOutput.reason === "unlinked") return "Thursday's audio has no active speaker connection."
+        if (nativeOutput.reason === "unavailable") return "System audio output could not be checked."
+        return ""
+    }
     readonly property bool recording: voiceState === "listening"
     readonly property bool voiceActive: ["listening", "transcribing"].indexOf(voiceState) >= 0
     readonly property bool taskActive: !!task && ["running", "awaiting_approval"].indexOf(task.status) >= 0
@@ -67,18 +85,20 @@ Scope {
         if (voiceState === "transcribing") return "Understanding"
         if (confirmations.length) return "Your approval is needed"
         if (speaking) return "Speaking"
+        if (playingAudio && playbackRunning) return outputNotice ? "Voice output needs attention" : "Connecting voice output"
+        if (playingAudio || speechPreparing) return "Preparing voice"
         if (connectionError) return "Connection needs attention"
         if (!connected) return "Connecting"
         if (!ready) return "Starting up"
         if (busy || taskActive) return activity || "Working on it"
-        if (errorText || voiceError) return "Needs attention"
+        if (errorText || voiceError || speechError) return "Needs attention"
         if (resumable) return "Task paused"
         return "Ready when you are"
     }
-    readonly property color stateColor: recording ? "#ffbab2" : (errorText || voiceError ? "#ffd08a" : accent)
+    readonly property color stateColor: recording ? "#ffbab2" : (errorText || voiceError || speechError ? "#ffd08a" : accent)
     readonly property bool hudVisible: !opened && !hudDismissed && (
         recording || ["transcribing", "thinking", "working", "submitted", "error", "done"].indexOf(voiceState) >= 0
-        || confirmations.length || busy || speaking || latestAnswer.length || voiceError.length)
+        || confirmations.length || busy || speaking || latestAnswer.length || voiceError.length || speechError.length)
 
     function chooseScreen() {
         var focused = Hyprland.focusedMonitor
@@ -137,6 +157,12 @@ Scope {
     function feedback(state, generationId) {
         if (generationId) send({command: "playback", state: state, generation_id: generationId})
     }
+    function audioDeviceInfo(device) {
+        var bytes = new Uint8Array(device.id)
+        var id = ""
+        for (var i = 0; i < bytes.length; i++) id += ("0" + bytes[i].toString(16)).slice(-2)
+        return {id_hex: id, description: device.description, is_default: device.isDefault}
+    }
     function stopAudio() {
         if (generation && retiredGenerations.indexOf(generation) < 0)
             retiredGenerations = retiredGenerations.concat([generation]).slice(-48)
@@ -148,6 +174,9 @@ Scope {
         for (var i = 0; i < audioQueue.length; i++) releaseAudio(audioQueue[i])
         audioQueue = []
         speechPreparing = false
+        speechNotice = ""
+        speechError = ""
+        nativeOutput = {known: false, audible: false, node_ids: [], reason: "checking"}
         feedback("idle", generation)
     }
     function nextAudio() {
@@ -155,8 +184,17 @@ Scope {
         var queue = audioQueue.slice()
         playingAudio = queue.shift()
         audioQueue = queue
+        playbackPosition = 0
+        reportedPlayingAudio = ""
+        nativeOutput = {known: false, audible: false, node_ids: [], reason: "checking"}
         player.source = playingAudio.local_url
         player.play()
+    }
+    function reportPlaying() {
+        if (!speaking || !playingAudio) return
+        var identity = String(playingAudio.audio_id || playingAudio.local_url)
+        if (reportedPlayingAudio === identity) return
+        reportedPlayingAudio = identity
         feedback("playing", playingAudio.generation_id)
     }
     function finishAudio(failed) {
@@ -314,6 +352,9 @@ Scope {
         case "voice_state":
             setVoice(data)
             break
+        case "native_output":
+            nativeOutput = data
+            break
         case "tts_preparing":
             if (retiredGenerations.indexOf(data.generation_id) >= 0) break
             if (data.generation_id && generation !== data.generation_id) {
@@ -338,6 +379,23 @@ Scope {
             break
         case "tts_synthesis_done":
             if (generation === data.generation_id) speechPreparing = false
+            break
+        case "tts_status":
+            if (data.client_id && data.client_id !== "native") break
+            if (data.generation_id && generation !== data.generation_id) break
+            if (retiredGenerations.indexOf(data.generation_id) >= 0) break
+            speechPreparing = false
+            if (data.state === "unavailable") {
+                speechError = data.message || "Speech is unavailable. Your response is still available here."
+                speechNotice = ""
+                hudDismissed = false
+            } else if (data.state === "fallback") {
+                speechError = ""
+                speechNotice = data.message || "Using the installed offline voice."
+            } else if (data.state === "ready") {
+                speechError = ""
+                speechNotice = ""
+            }
             break
         case "tts_stop":
             if (!data.generation_id || generation === data.generation_id) stopAudio()
@@ -402,6 +460,22 @@ Scope {
         function focus(): void { root.openChat() }
         function show(): void { root.openChat() }
         function hide(): void { root.opened = false }
+        function audioStatus(): string {
+            var available = []
+            for (var i = 0; i < devices.audioOutputs.length; i++)
+                available.push(root.audioDeviceInfo(devices.audioOutputs[i]))
+            return JSON.stringify({muted: root.muted, speak_typed: root.speakTyped,
+                playing: root.speaking, preparing: root.speechPreparing,
+                playback_running: root.playbackRunning, native_output: root.nativeOutput,
+                has_audio: player.hasAudio, playback_state: player.playbackState,
+                media_status: player.mediaStatus, position_ms: player.position, error_code: player.error,
+                output_available: devices.audioOutputs.length > 0,
+                output_volume: output.volume, output_muted: output.muted,
+                selected_device: root.audioDeviceInfo(output.device),
+                default_device: root.audioDeviceInfo(devices.defaultAudioOutput),
+                available_devices: available, measured_levels: !!root.audioEnvelope,
+                audio_level: chatSpeech.level})
+        }
     }
     Process {
         id: transport
@@ -429,14 +503,31 @@ Scope {
                 root.hudDismissed = true
         }
     }
+    MediaDevices { id: devices }
+    AudioOutput {
+        id: output
+        device: devices.defaultAudioOutput
+        volume: 0.85
+        muted: root.muted
+    }
+    onSpeakingChanged: reportPlaying()
+    Timer {
+        interval: 40
+        repeat: true
+        running: root.speaking && (root.opened || root.hudVisible)
+        onTriggered: root.playbackPosition = player.position
+    }
     MediaPlayer {
         id: player
-        audioOutput: AudioOutput { volume: 0.85; muted: root.muted }
+        audioOutput: output
+        onPositionChanged: root.playbackPosition = position
+        onPlaybackStateChanged: root.reportPlaying()
         onMediaStatusChanged: {
             if (mediaStatus === MediaPlayer.EndOfMedia) root.finishAudio(false)
+            else root.reportPlaying()
         }
         onErrorOccurred: {
-            root.errorText = "Audio couldn't play. Your response is available below."
+            root.speechError = "Audio couldn't play. Your response is available below."
             root.finishAudio(true)
         }
     }
@@ -470,13 +561,14 @@ Scope {
                 spacing: 14
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 12
+                    spacing: chatWindow.width < 400 ? 8 : 12
                     Rectangle {
+                        visible: chatWindow.width >= 360
                         width: 10; height: 10; radius: 5
                         color: root.stateColor
                         opacity: root.connected ? 1 : 0.45
                         SequentialAnimation on opacity {
-                            running: !root.reducedMotion && (root.recording || root.speaking)
+                            running: !root.reducedMotion && root.recording
                             loops: Animation.Infinite
                             NumberAnimation { to: 0.45; duration: 650 }
                             NumberAnimation { to: 1; duration: 650 }
@@ -492,8 +584,19 @@ Scope {
                             textFormat: Text.PlainText; elide: Text.ElideRight
                         }
                     }
+                    NativeButton { text: chatWindow.width < 400 ? "Web" : "Web app"; hint: "Open full history, memory, and Codex controls"; foreground: root.foreground; accent: root.accent; onClicked: root.send({command: "open_web"}) }
                     NativeButton { text: "⋯"; hint: "Voice and display settings"; foreground: root.foreground; accent: root.accent; onClicked: root.settingsOpen = !root.settingsOpen }
                     NativeButton { text: "×"; hint: "Close Thursday · Escape"; foreground: root.foreground; accent: root.accent; onClicked: root.opened = false }
+                }
+                SpeechVisualizer {
+                    id: chatSpeech
+                    Layout.fillWidth: true
+                    visible: root.speaking
+                    envelope: root.audioEnvelope
+                    positionMs: root.playbackPosition
+                    playing: root.speaking
+                    reducedMotion: root.reducedMotion
+                    accent: root.accent
                 }
                 ColumnLayout {
                     visible: root.settingsOpen
@@ -610,18 +713,31 @@ Scope {
                 }
                 Text {
                     Layout.fillWidth: true
-                    visible: root.errorText.length > 0 || root.voiceError.length > 0
-                    text: root.errorText || root.voiceError
+                    visible: root.errorText.length > 0 || root.voiceError.length > 0 || root.speechError.length > 0
+                    text: root.errorText || root.voiceError || root.speechError
                     wrapMode: Text.WordWrap; color: "#ffd08a"; font.pixelSize: 13
                     textFormat: Text.PlainText
                 }
+                Text {
+                    Layout.fillWidth: true
+                    visible: root.speechNotice.length > 0
+                    text: root.speechNotice
+                    wrapMode: Text.WordWrap; color: root.secondary; font.pixelSize: 12
+                    textFormat: Text.PlainText
+                }
+                Text {
+                    Layout.fillWidth: true
+                    visible: root.outputNotice.length > 0
+                    text: root.outputNotice; color: "#ffd08a"; font.pixelSize: 13
+                    wrapMode: Text.WordWrap; textFormat: Text.PlainText
+                }
                 RowLayout {
                     Layout.fillWidth: true
-                    visible: root.taskActive || root.voiceActive || root.resumable || root.speaking || root.errorText.length > 0
+                    visible: root.taskActive || root.voiceActive || root.resumable || !!root.playingAudio || root.errorText.length > 0
                     spacing: 8
                     NativeButton { visible: root.taskActive || root.voiceActive; text: root.taskActive ? "Stop task" : "Cancel voice"; destructive: true; onClicked: root.stopTask() }
                     NativeButton { visible: root.resumable; text: "Resume"; enabled: !root.busy; onClicked: root.send({command: "task_resume", task_id: root.task.id}) }
-                    NativeButton { visible: root.speaking; text: "Stop voice"; onClicked: root.stopAudio() }
+                    NativeButton { visible: !!root.playingAudio; text: "Stop voice"; onClicked: root.stopAudio() }
                     NativeButton {
                         visible: root.errorText.length > 0 && !root.taskActive && root.lastPrompt.length > 0
                         text: "Retry"; enabled: !root.busy && !root.sendPending
@@ -711,6 +827,15 @@ Scope {
                     Text { Layout.fillWidth: true; text: root.statusText; elide: Text.ElideRight; color: root.secondary; font.pixelSize: 12 }
                     NativeButton { text: "×"; hint: "Dismiss this response"; onClicked: root.hudDismissed = true }
                 }
+                SpeechVisualizer {
+                    Layout.fillWidth: true
+                    visible: root.speaking
+                    envelope: root.audioEnvelope
+                    positionMs: root.playbackPosition
+                    playing: root.speaking
+                    reducedMotion: root.reducedMotion
+                    accent: root.accent
+                }
                 Text {
                     Layout.fillWidth: true
                     visible: root.recording && !root.transcript.length
@@ -733,14 +858,26 @@ Scope {
                 }
                 Text {
                     Layout.fillWidth: true
-                    visible: root.voiceError.length > 0 || root.errorText.length > 0
-                    text: root.voiceError || root.errorText; color: "#ffd08a"; font.pixelSize: 13
+                    visible: root.voiceError.length > 0 || root.errorText.length > 0 || root.speechError.length > 0
+                    text: root.voiceError || root.errorText || root.speechError; color: "#ffd08a"; font.pixelSize: 13
                     textFormat: Text.PlainText; wrapMode: Text.WordWrap; maximumLineCount: 3
+                }
+                Text {
+                    Layout.fillWidth: true
+                    visible: root.speechNotice.length > 0
+                    text: root.speechNotice; color: root.secondary; font.pixelSize: 12
+                    textFormat: Text.PlainText; wrapMode: Text.WordWrap; maximumLineCount: 2
+                }
+                Text {
+                    Layout.fillWidth: true
+                    visible: root.outputNotice.length > 0
+                    text: root.outputNotice; color: "#ffd08a"; font.pixelSize: 13
+                    wrapMode: Text.WordWrap; textFormat: Text.PlainText; maximumLineCount: 3
                 }
                 RowLayout {
                     Layout.fillWidth: true
                     NativeButton { visible: root.taskActive || root.voiceActive; text: root.taskActive ? "Stop" : "Cancel voice"; destructive: true; onClicked: root.stopTask() }
-                    NativeButton { visible: root.speaking; text: "Stop voice"; onClicked: root.stopAudio() }
+                    NativeButton { visible: !!root.playingAudio; text: "Stop voice"; onClicked: root.stopAudio() }
                     Item { Layout.fillWidth: true }
                     NativeButton {
                         text: root.confirmations.length ? "Review action" : "Open conversation"

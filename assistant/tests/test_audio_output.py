@@ -92,6 +92,40 @@ def test_unknown_or_invalid_volume_cannot_prove_audibility(value):
     assert not output.output_state(data, 100)["known"]
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("softVolumes", None),
+        ("softVolumes", "1"),
+        ("softVolumes", []),
+        ("softVolumes", [1, -1]),
+        ("softVolumes", [1, float("nan")]),
+        ("channelVolumes", [-1, 1]),
+        ("volume", None),
+        ("volume", True),
+        ("volume", -1),
+        ("volume", float("inf")),
+    ],
+)
+def test_explicit_invalid_control_cannot_be_overridden_by_other_valid_gains(field, value):
+    data = graph()
+    data[2]["info"]["params"]["Props"][0][field] = value
+    assert output.output_state(data, 100) == {
+        "known": False,
+        "audible": False,
+        "node_ids": [2],
+        "reason": "unavailable",
+    }
+
+
+def test_invalid_volume_delta_replaces_prior_valid_control():
+    parser = output._GraphParser()
+    parser.feed(json.dumps(list(graph().values())).encode())
+    assert output.output_state(parser.graph, 100)["audible"]
+    parser.feed(b'[{"id":2,"info":{"params":{"Props":[{"softVolumes":null}]}}}]')
+    assert not output.output_state(parser.graph, 100)["known"]
+
+
 def test_inactive_link_is_not_an_output_route():
     data = graph()
     data[4]["info"]["state"] = "paused"

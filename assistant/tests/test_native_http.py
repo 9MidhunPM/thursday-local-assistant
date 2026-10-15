@@ -134,16 +134,19 @@ def test_playback_reports_real_owner_and_rejects_stale_generations(native_api, m
     assert server.tts_active is False
 
 
-def test_audio_routes_to_one_client_even_with_web_clients():
+@pytest.mark.parametrize(
+    "event_type", ["tts_audio", "tts_status", "tts_preparing", "tts_synthesis_done"],
+)
+def test_audio_routes_to_one_client_even_with_web_clients(event_type):
     broadcaster = server.EventBroadcaster()
     native = broadcaster.add_client("quickshell", "native")
     web = broadcaster.add_client("web", "tab-one")
     second = broadcaster.add_client("web", "tab-two")
-    broadcaster.broadcast("tts_audio", {"client_id": "native", "url": "/api/audio/fixture"})
-    assert native.get_nowait()["type"] == "tts_audio"
+    broadcaster.broadcast(event_type, {"client_id": "native", "url": "/api/audio/fixture"})
+    assert native.get_nowait()["type"] == event_type
     assert web.empty()
-    broadcaster.broadcast("tts_audio", {"client_id": "tab-two", "url": "/api/audio/fixture"})
-    assert second.get_nowait()["type"] == "tts_audio"
+    broadcaster.broadcast(event_type, {"client_id": "tab-two", "url": "/api/audio/fixture"})
+    assert second.get_nowait()["type"] == event_type
     assert native.empty()
     assert web.empty()
 

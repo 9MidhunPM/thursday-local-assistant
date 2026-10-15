@@ -11,7 +11,6 @@ import http.client
 import json
 import os
 import re
-import subprocess
 import sys
 import threading
 import time
@@ -25,6 +24,9 @@ from typing import TYPE_CHECKING, Any
 from dotenv import load_dotenv
 
 from assistant.paths import private_dir, private_write, purge_runtime_files, runtime_dir
+from assistant.voice.audio import audio_levels
+from assistant.voice.output import OutputObserver
+from assistant.web_launch import WebLaunchError, open_web_app
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
@@ -112,6 +114,10 @@ class NativeClient:
         except (OSError, ValueError):
             pass
         self._audio_files: dict[str, Path] = {}
+        self._audio_lock = threading.RLock()
+        self._output_observer = OutputObserver(
+            os.getppid(), lambda status: self.emit("native_output", status),
+        )
         # Do not use desktop proxy variables for a privileged loopback transport.
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
 
@@ -169,17 +175,32 @@ class NativeClient:
         name = uuid.uuid4().hex + ".mp3"
         target = self.runtime / name
         private_write(target, content)
-        self._audio_files[name] = target
-        self.emit("tts_audio", {**data, "local_url": target.as_uri(), "audio_id": name})
+        with self._audio_lock:
+            if self._stop.is_set():
+                target.unlink(missing_ok=True)
+                return
+            self._audio_files[name] = target
+            self._output_observer.start()
+        audio = {**data, "local_url": target.as_uri(), "audio_id": name}
+        envelope = audio_levels(target)
+        if envelope is not None:
+            audio["audio_levels"] = envelope
+        with self._audio_lock:
+            if self._stop.is_set() or name not in self._audio_files:
+                return
+            self.emit("tts_audio", audio)
         self._expire_audio()
 
     def _expire_audio(self) -> None:
         cutoff = time.time() - 300
-        for name, path in list(self._audio_files.items()):
-            with contextlib.suppress(OSError):
-                if not path.exists() or path.stat().st_mtime < cutoff:
-                    path.unlink(missing_ok=True)
-                    self._audio_files.pop(name, None)
+        with self._audio_lock:
+            for name, path in list(self._audio_files.items()):
+                with contextlib.suppress(OSError):
+                    if not path.exists() or path.stat().st_mtime < cutoff:
+                        path.unlink(missing_ok=True)
+                        self._audio_files.pop(name, None)
+            if not self._audio_files:
+                self._output_observer.stop()
 
     def stream_once(self) -> None:
         with self.request("/api/events?client=quickshell&client_id=native", timeout=35) as response:
@@ -252,9 +273,11 @@ class NativeClient:
 
     def close(self) -> None:
         self._stop.set()
-        for path in list(self._audio_files.values()):
-            path.unlink(missing_ok=True)
-        self._audio_files.clear()
+        with self._audio_lock:
+            self._output_observer.stop()
+            for path in list(self._audio_files.values()):
+                path.unlink(missing_ok=True)
+            self._audio_files.clear()
 
     def command(self, command: dict[str, Any]) -> None:
         """Only a small allowlist can cross from QML into the local privileged API."""
@@ -269,16 +292,19 @@ class NativeClient:
                 self.emit("native_settings", self.settings)
                 return
             if kind == "audio_release":
-                path = self._audio_files.pop(str(command.get("audio_id")), None)
-                if path:
-                    path.unlink(missing_ok=True)
+                with self._audio_lock:
+                    path = self._audio_files.pop(str(command.get("audio_id")), None)
+                    if path:
+                        path.unlink(missing_ok=True)
+                    if not self._audio_files:
+                        self._output_observer.stop()
                 return
             if kind == "open_web":
-                subprocess.Popen(
-                    ["xdg-open", self.base_url],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                try:
+                    result = open_web_app(self.base_url, start_service=True)
+                    self.emit("native_command_result", {"command": kind, "result": result})
+                except WebLaunchError as exc:
+                    self.emit("native_error", {"command": kind, "message": str(exc)})
                 return
             if kind == "health":
                 self.health()

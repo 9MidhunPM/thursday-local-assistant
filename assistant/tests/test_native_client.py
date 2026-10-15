@@ -15,12 +15,27 @@ from urllib.parse import urlsplit
 import pytest
 
 from assistant.native_client import NativeClient, iter_sse
+from assistant.web_launch import WebLaunchError
 
 
 @pytest.fixture
-def native_api(tmp_path):
+def native_api(tmp_path, monkeypatch):
     requests = []
     events = []
+
+    class OutputObserver:
+        def __init__(self, parent_pid, publish):
+            self.parent_pid = parent_pid
+            self.publish = publish
+            self.active = False
+
+        def start(self):
+            self.active = True
+
+        def stop(self):
+            self.active = False
+
+    monkeypatch.setattr("assistant.native_client.OutputObserver", OutputObserver)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -151,8 +166,10 @@ def test_commands_authenticate_and_voice_and_confirm_keep_identifiers(native_api
     assert all(event["type"] == "native_command_result" for event in received)
 
 
-def test_audio_is_targeted_private_and_removed_after_playback(native_api):
+def test_audio_is_targeted_private_and_removed_after_playback(native_api, monkeypatch):
     client, requests, events, received = native_api
+    envelope = {"interval_ms": 40, "levels": [0.0, 0.25, 0.0], "duration_ms": 120}
+    monkeypatch.setattr("assistant.native_client.audio_levels", lambda _path: envelope)
     data = {
         "client_id": "native",
         "generation_id": "speech-1",
@@ -176,9 +193,72 @@ def test_audio_is_targeted_private_and_removed_after_playback(native_api):
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
     assert audio[0]["local_url"] == path.as_uri()
+    assert audio[0]["audio_levels"] == envelope
+    assert client._output_observer.active
     assert len([request for request in requests if request[0].startswith("/api/audio/")]) == 1
     client.command({"command": "audio_release", "audio_id": audio[0]["audio_id"]})
     assert not path.exists()
+    assert not client._output_observer.active
+
+
+def test_output_observation_lasts_until_all_owned_audio_is_released(native_api, monkeypatch):
+    client, _requests, _events, received = native_api
+    monkeypatch.setattr("assistant.native_client.audio_levels", lambda _path: None)
+    data = {"client_id": "native", "url": "/api/audio/fixture.mp3"}
+    client._receive_audio(data)
+    client._receive_audio(data)
+    files = list(client._audio_files)
+    assert client._output_observer.active
+    client.command({"command": "audio_release", "audio_id": files[0]})
+    assert client._output_observer.active
+    status = {"known": True, "audible": False, "node_ids": [123], "reason": "volume_zero"}
+    client._output_observer.publish(status)
+    assert received[-1] == {"type": "native_output", "data": status}
+    client.close()
+    assert not client._output_observer.active
+    assert not client._audio_files
+
+
+def test_closed_helper_discards_audio_still_being_measured(native_api, monkeypatch):
+    client, _requests, _events, received = native_api
+    monkeypatch.setattr("assistant.native_client.audio_levels", lambda _path: client.close())
+    client._receive_audio({"client_id": "native", "url": "/api/audio/fixture.mp3"})
+    assert not any(event["type"] == "tts_audio" for event in received)
+    assert not client._audio_files
+    assert not client._output_observer.active
+
+
+def test_native_web_command_reuses_shared_supervised_launcher(native_api, monkeypatch):
+    client, _requests, _events, received = native_api
+    launches = []
+
+    def launch(url, *, start_service):
+        launches.append((url, start_service))
+        return {"status": "launch_requested", "reused": True}
+
+    monkeypatch.setattr("assistant.native_client.open_web_app", launch)
+    client.command({"command": "open_web"})
+    assert launches == [(client.base_url, True)]
+    assert received[-1] == {
+        "type": "native_command_result",
+        "data": {"command": "open_web", "result": {"status": "launch_requested", "reused": True}},
+    }
+
+
+def test_native_web_failure_emits_actionable_error(native_api, monkeypatch):
+    client, _requests, _events, received = native_api
+
+    def launch(_url, *, start_service):
+        assert start_service
+        message = "The existing web window could not be focused."
+        raise WebLaunchError(message)
+
+    monkeypatch.setattr("assistant.native_client.open_web_app", launch)
+    client.command({"command": "open_web"})
+    assert received[-1] == {
+        "type": "native_error",
+        "data": {"command": "open_web", "message": "The existing web window could not be focused."},
+    }
 
 
 def test_settings_are_private_boolean_preferences_only(native_api):

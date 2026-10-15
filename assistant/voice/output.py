@@ -54,6 +54,20 @@ def _level(node: dict) -> str:
         return "muted"
     if any(key in props and not isinstance(props[key], bool) for key in ("mute", "softMute")):
         return "unavailable"
+    # An absent optional control is different from an explicitly invalid update.
+    # The parser preserves invalid controls as None so old valid gains cannot win.
+    if "volume" in props:
+        scalar = _number(props["volume"])
+        if scalar is None or scalar < 0:
+            return "unavailable"
+    for key in ("channelVolumes", "softVolumes"):
+        if key not in props:
+            continue
+        values = props[key]
+        if not isinstance(values, list) or not values or len(values) > 64:
+            return "unavailable"
+        if any((number := _number(value)) is None or number < 0 for value in values):
+            return "unavailable"
     levels = []
     for key in ("channelVolumes", "softVolumes"):
         value = props.get(key)

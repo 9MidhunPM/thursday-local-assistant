@@ -12,7 +12,6 @@ import sys
 import tempfile
 import threading
 import time
-import webbrowser
 import wave
 import uuid
 from pathlib import Path
@@ -98,7 +97,7 @@ class EventBroadcaster:
         event = {"type": event_type, "data": data, "timestamp": time.time()}
         with self.lock:
             for c in self.clients:
-                if event_type in {"tts_audio", "tts_preparing", "tts_synthesis_done"}:
+                if event_type in {"tts_audio", "tts_preparing", "tts_synthesis_done", "tts_status"}:
                     target = data.get("client_id", "") if isinstance(data, dict) else ""
                     if target and c["id"] != target:
                         continue
@@ -1153,9 +1152,16 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             def _on_tts_speak_end() -> None:
                 if playback_generation == generation_id:
                     broadcaster.broadcast("tts_synthesis_done", {"client_id": client_id, "generation_id": generation_id})
+            def _on_tts_status(status: dict[str, str]) -> None:
+                if playback_generation == generation_id:
+                    broadcaster.broadcast(
+                        "tts_status",
+                        {**status, "client_id": client_id, "generation_id": generation_id},
+                    )
             tts._on_speak_start = _on_tts_speak_start
             tts._on_audio_ready = _on_tts_audio
             tts._on_speak_end = _on_tts_speak_end
+            tts._on_speech_status = _on_tts_status
 
         def _flush_tts(force: bool = False) -> None:
             with tts_lock:
@@ -1449,21 +1455,9 @@ def shutdown_server() -> None:
 
 
 def open_browser() -> None:
-    # Give the server a small moment to start up
-    time.sleep(0.5)
-    url = f"http://127.0.0.1:{running_port}"
-    import shutil
-    brave = shutil.which("brave") or shutil.which("brave-browser")
-    if brave:
-        import subprocess
-        from pathlib import Path
-        app_dir = Path.home() / ".config" / "brave-thursday-app"
-        app_dir.mkdir(parents=True, exist_ok=True)
-        subprocess.Popen(
-            [brave, f"--app={url}", f"--user-data-dir={app_dir}"],
-            start_new_session=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    else:
-        webbrowser.open(url)
+    from assistant.web_launch import WebLaunchError, open_web_app
+
+    try:
+        open_web_app(f"http://127.0.0.1:{running_port}")
+    except WebLaunchError as exc:
+        print(str(exc))
