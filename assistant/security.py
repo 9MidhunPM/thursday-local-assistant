@@ -2,10 +2,72 @@ from __future__ import annotations
 
 import hmac
 import os
+import re
 import secrets
+import time
 from functools import lru_cache
+from http.cookies import CookieError, SimpleCookie
 from ipaddress import ip_address
 from typing import Any
+
+BROWSER_SESSION_COOKIE = "Thursday-Session"
+BROWSER_SESSION_TTL = 3600
+BROWSER_SESSION_FUTURE_SKEW = 30
+_BROWSER_SESSION_PATTERN = re.compile(
+    r"v1\.([0-9]{1,16})\.([A-Za-z0-9_-]{32})\.([a-f0-9]{64})"
+)
+_BROWSER_SESSION_CONTEXT = b"thursday-browser-session-v1\0"
+
+
+def _session_now() -> float:
+    """Separate clock seam for deterministic expiry boundary checks."""
+    return time.time()
+
+
+def _session_signature(payload: str, token: str) -> str:
+    return hmac.new(
+        token.encode("utf-8"), _BROWSER_SESSION_CONTEXT + payload.encode("ascii"), "sha256"
+    ).hexdigest()
+
+
+def create_browser_session() -> str:
+    """Issue an hour-long browser credential signed by the local operator token."""
+    token = api_token()
+    if token is None:
+        message = "Configure THURSDAY_API_TOKEN before creating a browser session."
+        raise RuntimeError(message)
+    payload = f"v1.{int(_session_now())}.{secrets.token_urlsafe(24)}"
+    return f"{payload}.{_session_signature(payload, token)}"
+
+
+def _valid_browser_cookie(raw_cookie: str, token: str) -> bool:
+    if not isinstance(raw_cookie, str) or not raw_cookie or len(raw_cookie) > 4096:
+        return False
+    try:
+        cookies = SimpleCookie()
+        cookies.load(raw_cookie)
+        cookie = cookies.get(BROWSER_SESSION_COOKIE)
+        if cookie is None:
+            return False
+        value = cookie.value
+        matched = _BROWSER_SESSION_PATTERN.fullmatch(value)
+        if matched is None:
+            return False
+        payload, signature = value.rsplit(".", 1)
+        if not hmac.compare_digest(signature, _session_signature(payload, token)):
+            return False
+        age = _session_now() - int(matched.group(1))
+    except (CookieError, ValueError, TypeError, UnicodeError):
+        return False
+    return -BROWSER_SESSION_FUTURE_SKEW <= age < BROWSER_SESSION_TTL
+
+
+def _matches_operator_token(provided: str, expected: str) -> bool:
+    # compare_digest(str, str) rejects non-ASCII input with TypeError. A malformed
+    # HTTP header must be an authentication failure, never a request crash.
+    return isinstance(provided, str) and hmac.compare_digest(
+        provided.strip().encode("utf-8"), expected.encode("utf-8")
+    )
 
 
 def is_loopback_host(host: str) -> bool:
@@ -29,11 +91,12 @@ def assert_bind_allowed(host: str) -> None:
         "on",
     }
     if not allow:
-        raise RuntimeError(
+        message = (
             f"Refusing to bind Thursday to {host!r}. "
             "Set THURSDAY_ALLOW_REMOTE=1 only if you understand the risk "
             "(tools can control this machine). Prefer 127.0.0.1 and a tunnel."
         )
+        raise RuntimeError(message)
 
 
 @lru_cache(maxsize=1)
@@ -44,6 +107,7 @@ def api_token() -> str | None:
       Authorization: Bearer <token>
       or header X-Thursday-Token: <token>
       or query ?token=
+      or an unexpired Thursday-Session browser cookie
     """
     token = (os.getenv("THURSDAY_API_TOKEN") or "").strip()
     return token or None
@@ -65,16 +129,16 @@ def check_request_auth(headers: dict[str, str], query_token: str | None = None) 
     if not expected:
         return True
     auth = headers.get("Authorization") or headers.get("authorization") or ""
-    if auth.lower().startswith("bearer "):
+    if isinstance(auth, str) and auth.lower().startswith("bearer "):
         provided = auth[7:].strip()
-        if hmac.compare_digest(provided, expected):
+        if _matches_operator_token(provided, expected):
             return True
     header_token = headers.get("X-Thursday-Token") or headers.get("x-thursday-token")
-    if header_token and hmac.compare_digest(header_token.strip(), expected):
+    if header_token and _matches_operator_token(header_token, expected):
         return True
-    if query_token and hmac.compare_digest(query_token.strip(), expected):
+    if query_token and _matches_operator_token(query_token, expected):
         return True
-    return False
+    return _valid_browser_cookie(headers.get("Cookie") or headers.get("cookie") or "", expected)
 
 
 def generate_dev_token() -> str:

@@ -1,22 +1,29 @@
 # Desktop copilot release
 
-Thursday now has a task execution layer, a native Hypruse MCP connection, grounded personal
+Thursday has a task execution layer, a native Hypruse MCP connection, grounded personal
 memory, and an OpenAI Responses transport. GPT-6 Luna is the default with low reasoning effort;
 the assistant never automatically escalates to a more expensive model. This release implements
-the approved core-and-Hypruse scope. It does not promise perfect autonomy or a universal
-intelligence ranking.
+the desktop copilot through a persistent native companion and a detailed web interface.
 
 ## Install and run
 
 ```bash
-.venv/bin/python -m pip install -e '.[hypruse]'
-.venv/bin/python -m assistant.main --web
+.venv/bin/python -m pip install -e '.[hypruse,hotkeys,voice,desktop]'
+.venv/bin/python -m assistant.desktop_install install --dry-run
+.venv/bin/python -m assistant.desktop_install install
+.venv/bin/python -m assistant.desktop_install doctor
 ```
 
-Run from the graphical Hyprland session so the bridge inherits the display and session bus.
-Hypruse 0.11.0 and MCP 1.x are pinned to tested compatible versions. The existing `.env` key is
-reused; no global Codex plugin or MCP configuration is modified. Restart Thursday to load changed
-configuration and the rebuilt web client.
+Run from the graphical Hyprland session. The installer imports session access into two supervised
+user services and supports the existing Hyprland Lua/Quickshell layout described in the
+[native setup guide](NATIVE_DESKTOP.md). Closing chat leaves the backend available. For a foreground
+web session, use `./run.sh --web`; the launcher checks dependencies without installing them.
+
+Hypruse 0.11.0 and MCP 1.x are constrained to tested compatible versions in the same virtual
+environment. The private `.env` supplies credentials and identity; no global Codex plugin or MCP
+configuration is modified. Restart the backend after changing configuration. The default model
+and Google STT use cloud services. The default Edge voice also sends response text to its service;
+optional Kokoro synthesis stays local. See [data flow](NATIVE_DESKTOP.md#privacy-and-data-flow).
 
 The active configuration has 24 tool steps, a 300-second task budget, a 24,000-token request
 budget, up to 8,000 tokens of recent history, and 4,096 output tokens. The safe example retains
@@ -34,8 +41,8 @@ local inference, restricted paths, and disabled Hypruse. Configuration takes env
 
 ## Desktop workflow
 
-The first `hypruse__desktop` observation discovers the live tool schemas. All 14 supported tools
-become available during the task. `discover_tools` can add other capabilities as the task expands,
+The first `hypruse__desktop` observation discovers the live tool schemas. Supported tools become
+available during the task. `discover_tools` can add other capabilities as the task expands,
 including explicit file/calendar/desktop combinations.
 
 Window operations use Hyprland IPC; app controls use AT-SPI accessible names. Keyboard actions
@@ -65,8 +72,9 @@ security sandbox for every existing integration or shell command.
 
 ## Tasks and memory
 
-The web task panel shows progress, Stop/Resume, observed tool outcomes, token counts, and estimated
-cost. Outcomes are saved immediately after delivery, so stopping does not erase completed actions.
+The native companion shows progress, approvals, Stop, and Resume. Its **Full app** control opens
+the web task panel for detailed observed outcomes, token counts, and estimated cost. Outcomes are
+saved immediately after delivery, so stopping does not erase completed actions.
 Resume creates a child run in the original conversation with prior outcomes and invalidates cached
 desktop targets. A restart marks unfinished runs interrupted. Repeated identical outcomes and step
 or time exhaustion pause for review. A finished response is distinct from verified task success.
@@ -106,7 +114,7 @@ Earlier runs varied and are retained below; they also exposed incomplete fixture
 progress instruction that encouraged re-observation. These results support the cost choice, not
 a claim that one model is universally more intelligent.
 
-Standard prices per million input/cached/output tokens are $0.10/$0.01/$0.50 for
+Historical rates used by this comparison per million input/cached/output tokens were $0.10/$0.01/$0.50 for
 [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) and $0.20/$0.02/$1.20 for
 [GPT-5.6 Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna). Estimates exclude tool
 fees, cache writes, long-context multipliers, regional premiums, and usage unavailable after an
@@ -133,51 +141,37 @@ Rerun deliberately: `--live` makes paid requests, and fixtures do not touch the 
 
 ## Verification and limits
 
-The Python suite passes 146 tests, including Responses completion/reasoning replay, invalid tool
-arguments, mixed-batch ordering, cancellation between mutations, idle-stream cancellation,
-checkpoint recovery, memory correction/deletion, a real subprocess sending a large inline MCP
-image, and protected local HTTP task/memory routes. New modules pass their full Ruff rules; focused
-Python error checks pass across the repository. Existing repository-wide style debt remains.
-Approval regression cases cover mouse/focus movement, long approval waits, target replacement,
-failed observations, declined actions, fixed pointer coordinates, and sequences without duplicate
-approval requests. Nested tool arguments and arrays of results render as structured text instead
-of `[object Object]`, including when conversation history is reloaded.
+The native integration baseline has 422 passing Python tests, with one known dependency `aifc`
+deprecation warning. Controlled coverage includes Responses replay, tool validation, checkpoints,
+memory correction/deletion, guarded desktop approval, fragmented SSE, authentication, voice
+ownership, speech ordering/interruption, and installer rollback conflicts. The Vite 7.3.7 production
+build passes and the checked npm audit reports zero vulnerabilities.
 
-The production web build passes. Rendered QA used installed Chromium through Playwright because
-the Browser plugin was unavailable: `http://127.0.0.1:5015/`, 1440x1000 and 390x844. Page identity,
-nonblank rendering, no error overlay, no console errors, and no mobile horizontal overflow passed.
-The interaction path was send → Stop → Resume → finished → reload checkpoint → memory correction
-→ historical value check → Forget. QA used a temporary database and controlled model, so it does
-not claim a production voice, Gmail, Spotify, Calendar, or desktop-launcher test.
-Rendered evidence is saved outside source at `/tmp/thursday-memory.png` and
-`/tmp/thursday-mobile.png`.
+Live checks are recorded separately in the [native acceptance guide](NATIVE_DESKTOP.md#acceptance-scenarios).
+Service readiness, rendered UI, human microphone/playback confirmation, and a real model-driven
+Hypruse observation provide different evidence. Private desktop screenshots remain local.
 
 Checks run:
 
 ```bash
 .venv/bin/python -m pytest assistant/tests -q
-.venv/bin/ruff check assistant --select E9,F63,F7,F82
+.venv/bin/python -m ruff check assistant --select E9,F63,F7,F82
 cd assistant/web
 npx tsc --noEmit
 npm run build
 ```
 
-The session's controlled UI and desktop checks used `/tmp/thursday_ui_qa.py` and
-`/tmp/thursday_desktop_qa.py`; these are temporary QA harnesses, not application entry points.
-
-A temporary owned GTK window verified live MCP discovery (14 tools), accessible controls,
-window-targeted typing, named clicking, inline capture, and geometry preservation. It was closed
-after testing. A separate real GPT-6 Luna image request read the cropped window successfully. This
-is controlled integration evidence, not unattended operation of the user's entire desktop.
-
 Stop cancels the model stream and terminates the owned MCP child. Existing synchronous tools may
 still take their own timeout to return; an already delivered action is retained and cannot be
 rolled back by Stop. Budget checks happen between operations. The loop detector can conservatively
 pause a legitimate repeated observation. Memory review currently shows the latest 200 assertions.
-The fallback HTML and Quickshell overlay do not have the React task/memory panels.
+Detailed memory review, full task evidence, and Codex controls remain in the React web app;
+the native companion provides the everyday approval and task controls.
 
 ## Rollback and next work
 
+Use the [installer rollback](NATIVE_DESKTOP.md#rollback) to restore managed desktop files and
+prior service state. Conflicting edits preserve the complete installed module for review.
 To disable desktop automation, set `THURSDAY_HYPRUSE=0` and restart. To choose the previous Luna,
 set `LLM_MODEL=gpt-5.6-luna`; it works through Responses too. Local inference retains the existing
 Chat path. `LLM_API_MODE=chat` is an explicit transport rollback, with model-specific compatibility
@@ -185,7 +179,7 @@ constraints above. SQLite changes are additive: no existing conversation or pers
 is dropped. Do not manually erase runtime databases to roll back a model choice.
 
 The later roadmap remains: document ingestion with source citation, durable reminders, reviewed
-reusable routines, Codex job completion tracking, and voice interruption/transcript improvements.
+reusable routines, and Codex job completion tracking.
 Useful next milestones are extending the fixture catalog with real schemas and screenshot cases,
 testing additional GTK/Qt/Electron apps, replacing keyword routing with measured capability
 selection, and making long-running integration cancellation cooperative.

@@ -19,6 +19,7 @@ class PendingConfirm:
     prompt: str
     event: threading.Event = field(default_factory=threading.Event)
     approved: bool = False
+    expires_at: float = 0.0
 
 
 class ConfirmBroker:
@@ -34,11 +35,21 @@ class ConfirmBroker:
     def resolve(self, confirm_id: str, approved: bool) -> bool:
         with self._lock:
             item = self._pending.get(confirm_id)
-            if not item:
+            import time
+            if not item or item.event.is_set() or time.time() >= item.expires_at:
                 return False
             item.approved = approved
             item.event.set()
             return True
+
+    def snapshot(self) -> list[dict]:
+        """Recover actionable confirmations when a native client reconnects."""
+        import time
+        with self._lock:
+            return [{"id": item.id, "prompt": item.prompt,
+                     "timeout_sec": max(0, item.expires_at - time.time())}
+                    for item in self._pending.values()
+                    if not item.event.is_set() and item.expires_at > time.time()]
 
     def request(self, prompt: str, timeout_sec: float | None = None, cancel_event=None, force_web=False) -> bool:
         timeout = timeout_sec if timeout_sec is not None else self.default_timeout_sec
@@ -53,7 +64,8 @@ class ConfirmBroker:
 
         # Web / non-TTY: wait for API confirmation
         confirm_id = uuid.uuid4().hex[:12]
-        item = PendingConfirm(id=confirm_id, prompt=prompt)
+        import time
+        item = PendingConfirm(id=confirm_id, prompt=prompt, expires_at=time.time() + timeout)
         with self._lock:
             self._pending[confirm_id] = item
 

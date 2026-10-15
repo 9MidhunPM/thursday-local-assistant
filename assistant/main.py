@@ -7,8 +7,11 @@ import time
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
 from assistant.runtime import build_runtime, default_config_path
 from assistant.server import start_server, open_browser, broadcaster
+from assistant.paths import runtime_dir
 
 # ANSI Styling Constants
 COLOR_RESET = "\033[0m"
@@ -70,11 +73,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    runtime = build_runtime(args.config)
-    agent = runtime.agent
-    config = runtime.config
-    loggers = runtime.loggers
-    llm = runtime.llm
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
     # Single-instance guard with self-healing: a second process normally
     # exits, but a dead or unresponsive lock holder (ghost with no port)
@@ -83,7 +82,7 @@ def main() -> None:
     import signal
     import urllib.request
 
-    lock_path = "/tmp/thursday-server.lock"
+    lock_path = str(runtime_dir() / "server.lock")
 
     def _holder_pid() -> int | None:
         # Prefer the PID recorded in the lock file (written by current code).
@@ -123,6 +122,7 @@ def main() -> None:
             return True
 
     lock_fd = open(lock_path, "a+")  # noqa: SIM115
+    Path(lock_path).chmod(0o600)
     acquired = False
     for attempt in range(6):
         try:
@@ -131,7 +131,14 @@ def main() -> None:
             break
         except OSError:
             pid = _holder_pid()
-            if pid and pid != os.getpid() and _holder_unresponsive(pid):
+            owned = False
+            if pid:
+                try:
+                    command = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+                    owned = b"assistant.main" in command and b"-m" in command
+                except OSError:
+                    pass
+            if owned and pid != os.getpid() and _holder_unresponsive(pid):
                 print(f"Replacing unresponsive Thursday server (pid {pid})...")
                 try:
                     os.kill(pid, signal.SIGTERM if attempt < 3 else signal.SIGKILL)
@@ -148,6 +155,14 @@ def main() -> None:
     lock_fd.truncate()
     lock_fd.write(str(os.getpid()))
     lock_fd.flush()
+
+    # Acquiring ownership comes before constructing memory/task stores. A
+    # second launcher must not mark the running service's task interrupted.
+    runtime = build_runtime(args.config)
+    agent = runtime.agent
+    config = runtime.config
+    loggers = runtime.loggers
+    llm = runtime.llm
 
     # Start the HTTP/SSE server
     start_server(runtime)

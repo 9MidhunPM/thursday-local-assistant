@@ -2,8 +2,8 @@
 Type=Application
 Name=Thursday Local Model Tools
 GenericName=Legacy local-model switcher
-Comment=Optional llama.cpp fallback; Thursday currently uses OpenAI GPT-5.6 Luna
-Exec=/home/midhun/Coading/ThursdayV3/model.sh
+Comment=Optional llama.cpp tools; requires THURSDAY_ROOT to name the checkout
+Exec=sh -c "test -n \"$THURSDAY_ROOT\" && exec \"$THURSDAY_ROOT/model.sh\""
 Icon=applications-science
 Terminal=false
 Categories=Utility;ArtificialIntelligence;

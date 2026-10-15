@@ -649,7 +649,10 @@ for line in sys.stdin:
     registry = ToolRegistry()
     bridge = HypruseBridge(registry)
     try:
-        with patch("asyncio.create_subprocess_exec", fixture_process):
+        with (
+            patch("asyncio.create_subprocess_exec", fixture_process),
+            patch.object(bridge, "_preflight"),
+        ):
             bridge.connect()
             result = registry.get("hypruse__screenshot").execute({}, SimpleNamespace())
             assert result["success"]

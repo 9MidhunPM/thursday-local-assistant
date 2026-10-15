@@ -46,6 +46,16 @@ Tool habits:
 - Memory delete: use the dedicated delete/forget tools when asked to forget something.
 """
 
+EXPRESSION_GUIDANCE = """
+Presence and expression:
+- Speak with composed confidence, clear language, and occasional understated wit.
+- Keep routine confirmations to one or two sentences. Lead with the observed outcome.
+- During work, describe the next meaningful action briefly; avoid repeated acknowledgements.
+- Match the user's tone without calling them sir, inventing familiarity, or performing a character.
+- Show uncertainty and failures plainly. Personality never overrides evidence or permissions.
+- Observe desktop content only to carry out a request; never continuously watch or suggest tasks.
+"""
+
 
 def _resolve_path(value: str) -> str:
     """Resolve a config path against the project root when it is relative."""
@@ -143,6 +153,10 @@ class VoiceConfig:
     stt_enabled: bool
     stt_recognizer: str
     stt_language: str
+    tts_engine: str = "online"
+    tts_local_voice: str = "bm_george"
+    tts_speed: float = 1.0
+    tts_emergency_fallback: bool = False
 
 
 @dataclass(frozen=True)
@@ -282,7 +296,7 @@ def load_config(path: Path) -> AppConfig:
         or agent_cfg.get("system_prompt")
         or DEFAULT_SYSTEM_PROMPT
     )
-    system_prompt = _render_prompt(prompt_template, user_name)
+    system_prompt = _render_prompt(prompt_template, user_name) + EXPRESSION_GUIDANCE
 
     max_tool_steps = int(
         os.getenv("THURSDAY_MAX_TOOL_STEPS") or agent_cfg.get("max_tool_steps", 6)
@@ -355,8 +369,16 @@ def load_config(path: Path) -> AppConfig:
         ),
         voice=VoiceConfig(
             tts_enabled=bool(voice_cfg.get("tts_enabled", True)),
-            tts_voice=str(voice_cfg.get("tts_voice", "en-US-EmmaMultilingualNeural")),
-            tts_rate=str(voice_cfg.get("tts_rate", "+25%")),
+            tts_engine=os.getenv("THURSDAY_TTS_ENGINE") or str(voice_cfg.get("tts_engine", "online")),
+            tts_local_voice=os.getenv("THURSDAY_TTS_LOCAL_VOICE") or str(
+                voice_cfg.get("tts_local_voice", "bm_george")
+            ),
+            tts_speed=float(os.getenv("THURSDAY_TTS_SPEED") or voice_cfg.get("tts_speed", 1.0)),
+            tts_emergency_fallback=bool(_env_bool(
+                "THURSDAY_TTS_EMERGENCY_FALLBACK", voice_cfg.get("tts_emergency_fallback", False)
+            )),
+            tts_voice=os.getenv("THURSDAY_TTS_VOICE") or str(voice_cfg.get("tts_voice", "en-GB-RyanNeural")),
+            tts_rate=os.getenv("THURSDAY_TTS_RATE") or str(voice_cfg.get("tts_rate", "+0%")),
             stt_enabled=bool(voice_cfg.get("stt_enabled", True)),
             stt_recognizer=str(voice_cfg.get("stt_recognizer", "google")),
             stt_language=str(voice_cfg.get("stt_language", "en-US")),

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import http.server
 import json
+import importlib.util
+import io
 import os
 import queue
 import socketserver
@@ -10,7 +12,8 @@ import sys
 import tempfile
 import threading
 import time
-import webbrowser
+import wave
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +22,12 @@ import httpx
 from assistant.agent.confirm import confirm_broker
 from assistant.integrations.browser_bridge import browser_bridge
 from assistant.runtime import AssistantRuntime
+from assistant.paths import runtime_dir, private_write, purge_runtime_files
 from assistant.security import (
+    api_token,
+    create_browser_session,
+    BROWSER_SESSION_COOKIE,
+    BROWSER_SESSION_TTL,
     assert_bind_allowed,
     check_request_auth,
     require_token_configured_for_remote,
@@ -59,10 +67,10 @@ class EventBroadcaster:
         self.shutdown_timer = None
         self._shutting_down = False
 
-    def add_client(self, client_type: str = "web") -> queue.Queue[dict[str, Any]]:
+    def add_client(self, client_type: str = "web", client_id: str = "") -> queue.Queue[dict[str, Any]]:
         q: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=100)
         with self.lock:
-            self.clients.append({"queue": q, "type": client_type})
+            self.clients.append({"queue": q, "type": client_type, "id": client_id})
             if self.shutdown_timer:
                 self.shutdown_timer.cancel()
                 self.shutdown_timer = None
@@ -88,10 +96,13 @@ class EventBroadcaster:
                 data = {**data, "task_id": run.data["id"], "conversation_id": run.data["conversation_id"]}
         event = {"type": event_type, "data": data, "timestamp": time.time()}
         with self.lock:
-            has_web = any(c["type"] == "web" for c in self.clients)
             for c in self.clients:
-                if event_type == "tts_audio" and c["type"] == "quickshell" and has_web:
-                    continue
+                if event_type in {"tts_audio", "tts_preparing", "tts_synthesis_done", "tts_status"}:
+                    target = data.get("client_id", "") if isinstance(data, dict) else ""
+                    if target and c["id"] != target:
+                        continue
+                    if not target and c["type"] == "quickshell":
+                        continue
                 try:
                     c["queue"].put_nowait(event)
                 except queue.Full:
@@ -149,6 +160,104 @@ model_log_buffer: list[str] = []
 active_conversation_id: int | None = None
 http_server: "ThreadingHTTPServer | None" = None
 server_thread: threading.Thread | None = None
+voice_controller = None
+_voice_runtime = None
+_voice_lock = threading.RLock()
+playback_generation: str | None = None
+playback_client = ""
+playback_lock = threading.RLock()
+
+
+def stop_playback() -> None:
+    global tts_active, playback_generation, playback_client
+    with playback_lock:
+        tts_active = False
+        playback_generation, playback_client = None, ""
+        if server_runtime and server_runtime.tts:
+            server_runtime.tts.stop()
+        broadcaster.broadcast("tts_stop", {})
+
+
+def interrupt_output() -> None:
+    """Cancel owned work cooperatively; microphone startup never waits on it."""
+    if server_runtime:
+        tasks = getattr(server_runtime.agent, "tasks", None)
+        if tasks and tasks.active and not tasks.active.finished:
+            tasks.cancel(tasks.active.data["id"])
+        bridge = getattr(server_runtime.agent, "hypruse", None)
+        if bridge:
+            bridge.close(wait=False)
+    stop_playback()
+
+
+def _voice() -> Any:
+    global voice_controller, _voice_runtime
+    from assistant.voice.controller import VoiceController
+    with _voice_lock:
+        if _voice_runtime is not server_runtime or voice_controller is None:
+            if voice_controller is not None:
+                voice_controller.close()
+
+            def transcribe(audio):
+                if not server_runtime or not server_runtime.stt:
+                    raise RuntimeError("Speech recognition unavailable")
+                with wave.open(io.BytesIO(audio), "rb") as wav:
+                    return server_runtime.stt.transcribe_bytes(
+                        wav.readframes(wav.getnframes()),
+                        sample_width=wav.getsampwidth(), sample_rate=wav.getframerate(),
+                    )
+
+            def wait_until_ready(cancelled):
+                budget = getattr(getattr(server_runtime.config, "agent", None), "task_timeout_sec", 300)
+                deadline = time.monotonic() + budget
+                while not cancelled.is_set() and time.monotonic() < deadline:
+                    with busy_lock:
+                        if not is_busy:
+                            return True
+                    cancelled.wait(0.05)
+                return False
+
+            voice_controller = VoiceController(
+                transcribe=transcribe, submit=lambda text: accept_message(text, True, client_id="native"),
+                interrupt=interrupt_output, publish=lambda state: broadcaster.broadcast("voice_state", state),
+                wait_until_ready=wait_until_ready,
+            )
+            _voice_runtime = server_runtime
+        return voice_controller
+
+
+class MessageRejected(RuntimeError):
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+def accept_message(prompt: str, use_tts: bool = False, conversation_id=None, client_id="") -> dict:
+    """Reserve one task before starting its worker, shared by every input surface."""
+    global is_busy
+    with busy_lock:
+        if is_busy:
+            raise MessageRejected(409, "Thursday is busy. Stop the current task or wait.")
+        if not server_runtime:
+            raise MessageRejected(503, "Runtime unavailable")
+        if conversation_id is not None:
+            conversation_id = int(conversation_id)
+            if not server_runtime.conversation_store.get_conversation(conversation_id):
+                raise MessageRejected(404, "Conversation does not exist")
+            _activate_conversation(conversation_id)
+        else:
+            conversation_id = _ensure_active_conversation()
+        tasks = server_runtime.agent.tasks
+        tasks.on_update = lambda current: broadcaster.broadcast("task_updated", current)
+        task = tasks.create(prompt, conversation_id, server_runtime.config.agent.task_timeout_sec)
+        task.web = True
+        is_busy = True
+    stop_playback()
+    broadcaster.broadcast("user_message", {"content": prompt, "client_id": client_id})
+    broadcaster.broadcast("status", {"busy": True})
+    threading.Thread(target=ThursdayHTTPRequestHandler.run_agent,
+                     args=(None, prompt, use_tts, conversation_id, task, client_id), daemon=True).start()
+    return {"status": "processing", "conversation_id": conversation_id, "task_id": task.data["id"]}
 
 # Wire confirmations to SSE so the web UI can approve dangerous tools.
 confirm_broker.set_broadcast(broadcaster.broadcast)
@@ -331,12 +440,33 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 "provider": provider,
                 "model": model_name,
                 "mode": mode,
+                "auth_required": bool(api_token() and not check_request_auth(self._headers_dict())),
                 "brave_helper": browser_bridge.status(),
+                "desktop": server_runtime.agent.hypruse.status()
+                    if server_runtime and getattr(server_runtime.agent, "hypruse", None)
+                    else {"state": "disabled", "message": "Desktop control is disabled."},
+                "voice": {"stt_ready": bool(server_runtime and server_runtime.stt),
+                          "tts_ready": bool(server_runtime and server_runtime.tts),
+                          "microphone_dependency": importlib.util.find_spec("pyaudio") is not None,
+                          "hotkeys_dependency": importlib.util.find_spec("evdev") is not None,
+                          "state": voice_controller.snapshot()["state"] if voice_controller else "idle"},
             }
             try:
                 self.wfile.write(json.dumps(health_data).encode())
             except (BrokenPipeError, ConnectionResetError):
                 pass
+            return
+
+        if parsed_path == "/api/voice":
+            if not self._require_local_origin():
+                return
+            self._send_json(200, _voice().snapshot())
+            return
+
+        if parsed_path == "/api/browser-session":
+            if not self._require_local_origin():
+                return
+            self._send_json(200, {"ok": True})
             return
 
         if self.path == "/api/tools":
@@ -380,6 +510,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             from urllib.parse import parse_qs
             params = parse_qs(urlparse(self.path).query)
             client_type = params.get("client", ["web"])[0]
+            client_id = params.get("client_id", [""])[0][:100]
             if client_type not in ("web", "quickshell"):
                 client_type = "web"
 
@@ -390,18 +521,24 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
 
-            q = broadcaster.add_client(client_type)
+            q = broadcaster.add_client(client_type, client_id)
             try:
                 # Send initial state including buffered logs and the FULL history
                 # of the active conversation (not the pruned model context window).
                 history_data = _history_for_active_conversation()
 
                 self.wfile.write(
-                    f"data: {json.dumps({'type': 'init', 'data': {'busy': is_busy, 'model_ready': is_model_ready, 'logs': model_log_buffer, 'history': history_data, 'conversation_id': active_conversation_id, 'task': server_runtime.agent.tasks.latest(active_conversation_id) if server_runtime and server_runtime.agent.tasks else None}})}\n\n".encode()
+                    f"data: {json.dumps({'type': 'init', 'data': {'busy': is_busy, 'model_ready': is_model_ready, 'logs': model_log_buffer, 'history': history_data, 'conversation_id': active_conversation_id, 'task': server_runtime.agent.tasks.latest(active_conversation_id) if server_runtime and server_runtime.agent.tasks else None, 'pending_confirms': confirm_broker.snapshot(), 'voice_state': voice_controller.snapshot() if voice_controller else {'state': 'idle'}}})}\n\n".encode()
                 )
                 self.wfile.flush()
 
                 while True:
+                    # A long-lived browser stream cannot outlive its signed
+                    # session. Native bearer clients retain their own lifetime.
+                    if not check_request_auth(
+                        self._headers_dict(), (params.get("token") or [None])[0]
+                    ):
+                        break
                     try:
                         # Periodically timeout to check if client socket has closed
                         event = q.get(timeout=2.0)
@@ -425,10 +562,14 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.handle_get_conversation(parsed_path)
             return
 
-        if self.path.startswith("/api/audio/"):
-            filename = self.path.split("/")[-1]
-            filepath = Path("/tmp/thursday_tts") / filename
-            if filepath.exists() and filepath.is_file():
+        if parsed_path.startswith("/api/audio/"):
+            import re
+            filename = parsed_path.rsplit("/", 1)[-1]
+            if not re.fullmatch(r"tts_[a-f0-9]{8,32}\.mp3", filename):
+                self.send_error(404, "Audio file not found")
+                return
+            filepath = runtime_dir("tts") / filename
+            if filepath.is_file() and not filepath.is_symlink():
                 self.send_response(200)
                 self.send_header("Content-Type", "audio/mpeg")
                 self.send_header("Access-Control-Allow-Origin", "*")
@@ -441,8 +582,8 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                     self.send_header("Content-Length", str(len(data)))
                     self.end_headers()
                     self.wfile.write(data)
-                except Exception as e:
-                    self.send_error(500, f"Error reading file: {e}")
+                except OSError:
+                    self.send_error(500, "Audio could not be read")
                 
                 # Try to clean up after serving
                 try:
@@ -709,7 +850,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         parsed_path = parsed.path
         query = parse_qs(parsed.query)
         q_token = (query.get("token") or [None])[0]
-        if parsed_path.startswith(("/api/tasks/", "/api/memory/", "/api/message", "/api/confirm")) and not self._require_local_origin():
+        if parsed_path.startswith(("/api/tasks/", "/api/memory/", "/api/message", "/api/confirm", "/api/voice", "/api/playback", "/api/browser-session")) and not self._require_local_origin():
             return
 
         if parsed_path == "/api/browser-bridge/v2/result":
@@ -743,6 +884,61 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         if parsed_path.startswith("/api/") and not self._require_auth(query_token=q_token):
             return
 
+        if parsed_path == "/api/browser-session":
+            # Renewal requires the operator token again, never only an old cookie.
+            supplied = self._headers_dict()
+            supplied.pop("Cookie", None)
+            supplied.pop("cookie", None)
+            if api_token() and not check_request_auth(supplied):
+                self._send_json(401, {"error": "A local access token is required"})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            if api_token():
+                self.send_header("Set-Cookie", f"{BROWSER_SESSION_COOKIE}={create_browser_session()}; HttpOnly; SameSite=Strict; Path=/api; Max-Age={BROWSER_SESSION_TTL}")
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+            return
+
+        if parsed_path.startswith("/api/voice/"):
+            if not server_runtime:
+                self._send_json(503, {"error": "Runtime unavailable"})
+                return
+            action = parsed_path.rsplit("/", 1)[-1]
+            if action not in {"start", "stop", "cancel"}:
+                self._send_json(404, {"error": "Unknown voice action"})
+                return
+            try:
+                data = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+                session_id = data.get("session_id")
+                if session_id is not None and not isinstance(session_id, str):
+                    raise ValueError("Invalid voice session")
+                result = _voice().start() if action == "start" else getattr(_voice(), action)(session_id)
+                self._send_json(200, result)
+            except (ValueError, TypeError, AttributeError):
+                self._send_json(400, {"error": "Invalid voice request"})
+            return
+
+        if parsed_path == "/api/playback":
+            global tts_active
+            try:
+                data = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+                state = data.get("state")
+                generation = data.get("generation_id")
+                if state not in {"playing", "idle", "failed"} or not isinstance(generation, str) or not generation:
+                    raise ValueError("Invalid playback state")
+                with playback_lock:
+                    if generation != playback_generation or data.get("client_id", "") != playback_client:
+                        self._send_json(409, {"error": "Playback generation expired"})
+                        return
+                    tts_active = state == "playing"
+                    broadcaster.broadcast("playback_state", {**data, "active": tts_active})
+                self._send_json(200, {"ok": True})
+            except (ValueError, TypeError, AttributeError):
+                self._send_json(400, {"error": "Invalid playback request"})
+            return
+
         if parsed_path == "/api/confirm":
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length) if content_length else b"{}"
@@ -774,11 +970,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             if action == "cancel":
                 ok = tasks.cancel(task_id)
                 if ok:
-                    if server_runtime.tts:
-                        server_runtime.tts.stop()
-                    # Releasing the owned stdio process invokes Hypruse's pointer cleanup.
-                    if server_runtime.agent.hypruse:
-                        server_runtime.agent.hypruse.close()
+                    interrupt_output()
                 self._send_json(200 if ok else 409, {"ok": ok})
                 return
             with busy_lock:
@@ -798,7 +990,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 is_busy = True
             prompt = "Resume this task: " + previous["goal"]
             self._send_json(200, {"task_id": task.data["id"], "conversation_id": cid})
-            threading.Thread(target=self.run_agent, args=(prompt, False, cid, task), daemon=True).start()
+            threading.Thread(target=self.run_agent, args=(prompt, False, cid, task, ""), daemon=True).start()
             return
 
         if parsed_path.startswith("/api/memory/"):
@@ -836,55 +1028,19 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(b"Prompt cannot be empty")
                 return
 
-            with busy_lock:
-                if is_busy:
-                    self._send_json(409, {"error": "Agent is busy"})
-                    return
-                if not server_runtime:
-                    self._send_json(503, {"error": "Runtime unavailable"})
-                    return
-                try:
-                    if conversation_id is not None:
-                        conversation_id = int(conversation_id)
-                        if not server_runtime.conversation_store.get_conversation(conversation_id):
-                            self._send_json(404, {"error": "Conversation does not exist"})
-                            return
-                        _activate_conversation(conversation_id)
-                    else:
-                        conversation_id = _ensure_active_conversation()
-                    server_runtime.agent.tasks.on_update = lambda task: broadcaster.broadcast("task_updated", task)
-                    task = server_runtime.agent.tasks.create(prompt, conversation_id,
-                        server_runtime.config.agent.task_timeout_sec)
-                    task.web = True
-                except (ValueError, TypeError, RuntimeError):
-                    self._send_json(400, {"error": "Invalid task or conversation"})
-                    return
-                is_busy = True
-
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(
-                json.dumps(
-                    {"status": "processing", "conversation_id": conversation_id, "task_id": task.data["id"]}
-                ).encode()
-            )
-
-            # Stop any ongoing TTS from previous response
-            if server_runtime and server_runtime.tts:
-                server_runtime.tts.stop()
-
-            # Show the user's message in all UIs (web, quickshell), the same
-            # way the CLI does — otherwise API-sent prompts (voice PTT) are
-            # invisible in the chat history until the response arrives.
-            broadcaster.broadcast("user_message", {"content": prompt})
-
-            # Start agent reasoning in a separate thread
-            threading.Thread(
-                target=self.run_agent,
-                args=(prompt, use_tts, conversation_id, task),
-                daemon=True,
-            ).start()
+            client_id = data.get("client_id", "")
+            if not isinstance(client_id, str) or len(client_id) > 100:
+                self._send_json(400, {"error": "Invalid playback client"})
+                return
+            try:
+                accepted = accept_message(prompt, bool(use_tts), conversation_id, client_id)
+            except MessageRejected as exc:
+                self._send_json(exc.status, {"error": str(exc)})
+                return
+            except (ValueError, TypeError, RuntimeError):
+                self._send_json(400, {"error": "Invalid task or conversation"})
+                return
+            self._send_json(200, accepted)
             return
 
         if parsed_path == "/api/conversations":
@@ -931,14 +1087,20 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
         self.send_error(404, "Not Found")
 
-    def run_agent(self, prompt: str, use_tts: bool = False, conversation_id: int | None = None, task=None) -> None:
+    def run_agent(self, prompt: str, use_tts: bool = False, conversation_id: int | None = None, task=None, client_id="") -> None:
         import re as _re
         import time
-        global is_busy
+        global is_busy, playback_generation, playback_client
         tts = server_runtime.tts if server_runtime and use_tts else None
+        generation_id = uuid.uuid4().hex
+        sequence = 0
+        if tts:
+            with playback_lock:
+                playback_generation, playback_client = generation_id, client_id
         tts_buffer: list[str] = []
         tts_spoken_index = 0
         tts_first_flush_done = False
+        tts_lock = threading.RLock()
         _tts_debounce_timer: threading.Timer | None = None
         response_started_at = time.monotonic()
         first_token_at: float | None = None
@@ -967,42 +1129,59 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         # Wire TTS audio callbacks to SSE
         if tts:
             def _on_tts_speak_start() -> None:
-                broadcaster.broadcast("tts_preparing", {})
+                broadcaster.broadcast("tts_preparing", {"client_id": client_id, "generation_id": generation_id})
                 if server_runtime:
                     server_runtime.loggers.model.info(
                         "tts_preparing_ms=%s",
                         round((time.monotonic() - response_started_at) * 1000),
                     )
             def _on_tts_audio(filename: str, text: str) -> None:
-                global tts_active
-                tts_active = True
+                nonlocal sequence
+                if playback_generation != generation_id:
+                    return
+                sequence += 1
                 if server_runtime:
                     server_runtime.loggers.model.info(
                         "tts_audio_ready_ms=%s text_chars=%s",
                         round((time.monotonic() - response_started_at) * 1000),
                         len(text),
                     )
-                broadcaster.broadcast("tts_audio", {"url": f"/api/audio/{filename}", "text": text})
+                broadcaster.broadcast("tts_audio", {"url": f"/api/audio/{filename}", "text": text,
+                    "client_id": client_id, "generation_id": generation_id, "sequence": sequence,
+                    "task_id": task.data["id"] if task else None})
             def _on_tts_speak_end() -> None:
-                global tts_active
-                tts_active = False
-                broadcaster.broadcast("tts_stop", {})
+                if playback_generation == generation_id:
+                    broadcaster.broadcast("tts_synthesis_done", {"client_id": client_id, "generation_id": generation_id})
+            def _on_tts_status(status: dict[str, str]) -> None:
+                if playback_generation == generation_id:
+                    broadcaster.broadcast(
+                        "tts_status",
+                        {**status, "client_id": client_id, "generation_id": generation_id},
+                    )
             tts._on_speak_start = _on_tts_speak_start
             tts._on_audio_ready = _on_tts_audio
             tts._on_speak_end = _on_tts_speak_end
+            tts._on_speech_status = _on_tts_status
 
         def _flush_tts(force: bool = False) -> None:
+            with tts_lock:
+                _flush_tts_locked(force)
+
+        def _flush_tts_locked(force: bool = False) -> None:
             nonlocal tts_spoken_index, tts_first_flush_done, _tts_debounce_timer
             if _tts_debounce_timer:
                 _tts_debounce_timer.cancel()
                 _tts_debounce_timer = None
-            if not tts or tts_spoken_index >= len(tts_buffer):
+            if not tts or (task and task.cancelled.is_set()) or tts_spoken_index >= len(tts_buffer):
                 return
             text = "".join(tts_buffer[tts_spoken_index:])
             if not text.strip():
                 return
-            clean = _re.sub(r"[*_`#\[\]]", "", text)
-            clean = _re.sub(r"\[.*?\]\(.*?\)", "", clean)
+            # Keep an opening fence with its later code and closing fence.
+            # Advancing past the opener would turn later code into spoken text.
+            if not force and (text.count("```") % 2 or text.rstrip().endswith("`")):
+                return
+            clean = tts._clean_text(text)
             if clean.strip():
                 tts.speak_async(clean.strip())
                 tts_first_flush_done = True
@@ -1012,7 +1191,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             nonlocal _tts_debounce_timer
             if _tts_debounce_timer:
                 _tts_debounce_timer.cancel()
-            _tts_debounce_timer = threading.Timer(0.15, _flush_tts, kwargs={"force": True})
+            _tts_debounce_timer = threading.Timer(0.4, _flush_tts)
             _tts_debounce_timer.daemon = True
             _tts_debounce_timer.start()
 
@@ -1027,29 +1206,30 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                         round((first_token_at - response_started_at) * 1000),
                     )
             if tts:
-                tts_buffer.append(chunk)
-                acc = "".join(tts_buffer[tts_spoken_index:])
+                with tts_lock:
+                    tts_buffer.append(chunk)
+                    acc = "".join(tts_buffer[tts_spoken_index:])
 
-                # Flush on real sentence boundary with enough text buffered
-                # (queue-based TTS handles sequential playback, so flush often)
-                has_boundary = _SENTENCE_END.search(acc)
-                is_long_enough = len(acc) >= 15
-                ends_with_newline = acc.rstrip().endswith('\n')
-                early_first_phrase = (
-                    not tts_first_flush_done
-                    and len(acc.strip()) >= 36
-                    and (acc[-1:].isspace() or len(acc.strip()) >= 64)
-                )
+                    # Flush on real sentence boundary with enough text buffered
+                    # (queue-based TTS handles sequential playback, so flush often)
+                    has_boundary = _SENTENCE_END.search(acc)
+                    is_long_enough = len(acc) >= 15
+                    ends_with_newline = acc.rstrip().endswith('\n')
+                    early_first_phrase = (
+                        not tts_first_flush_done
+                        and len(acc.strip()) >= 36
+                        and (acc[-1:].isspace() or len(acc.strip()) >= 64)
+                    )
 
-                if early_first_phrase:
-                    _flush_tts()
-                elif has_boundary and is_long_enough and not _ABBREV_PATTERN.search(acc):
-                    _flush_tts()
-                elif ends_with_newline and len(acc.strip()) > 10:
-                    _flush_tts()
-                else:
-                    # Debounce: auto-flush if tokens stop arriving
-                    _schedule_debounce()
+                    if early_first_phrase:
+                        _flush_tts()
+                    elif has_boundary and is_long_enough and not _ABBREV_PATTERN.search(acc):
+                        _flush_tts()
+                    elif ends_with_newline and len(acc.strip()) > 10:
+                        _flush_tts()
+                    else:
+                        # Debounce: auto-flush if tokens stop arriving
+                        _schedule_debounce()
 
         def on_tool_call(tool: str, arguments: dict[str, Any]) -> None:
             broadcaster.broadcast("tool_call", {"tool": tool, "arguments": arguments})
@@ -1085,6 +1265,8 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         finally:
             if _tts_debounce_timer:
                 _tts_debounce_timer.cancel()
+            if task and task.cancelled.is_set() and tts:
+                tts.stop()
             with busy_lock:
                 is_busy = False
             broadcaster.broadcast("status", {"busy": False})
@@ -1095,13 +1277,16 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         webm_path: str | None = None
         wav_path: str | None = None
         try:
-            tmp = tempfile.NamedTemporaryFile(suffix=".webm", delete=False)
+            directory = runtime_dir("stt")
+            purge_runtime_files(directory)
+            tmp = tempfile.NamedTemporaryFile(suffix=".webm", delete=False, dir=directory)
             tmp.write(audio_data)
             tmp.flush()
             webm_path = tmp.name
             tmp.close()
 
             wav_path = webm_path + ".wav"
+            private_write(Path(wav_path), b"")
             ffmpeg_cmd = [
                 "ffmpeg", "-y", "-i", webm_path,
                 "-ar", "16000", "-ac", "1", "-sample_fmt", "s16",
@@ -1109,13 +1294,12 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             ]
             convert = subprocess.run(ffmpeg_cmd, capture_output=True, timeout=30)
             if convert.returncode != 0:
-                raise RuntimeError(f"Audio conversion failed: {convert.stderr.decode(errors='ignore')[:200]}")
+                raise RuntimeError("Audio could not be decoded")
 
             text = rt.stt.transcribe(wav_path)
             return {"text": text}
-        except Exception as exc:
-            print(f"STT Error: {exc}")
-            return {"error": str(exc)}
+        except Exception:
+            return {"error": "Speech could not be recognized. Check the microphone and speech connection."}
         finally:
             for p in (webm_path, wav_path):
                 if p and os.path.exists(p):
@@ -1137,6 +1321,7 @@ def start_server(
 ) -> None:
     global server_runtime, running_port, http_server, server_thread, is_model_ready
     server_runtime = runtime
+    confirm_broker.set_broadcast(broadcaster.broadcast)
 
     host = host or os.getenv("THURSDAY_HOST", "127.0.0.1")
     port = port if port is not None else int(os.getenv("THURSDAY_PORT", "5005"))
@@ -1248,6 +1433,8 @@ def shutdown_server() -> None:
     # Shutdown runtime (closes LLM client, stops TTS)
     if server_runtime:
         try:
+            if voice_controller:
+                voice_controller.close()
             server_runtime.shutdown()
         except Exception as e:
             print(f"Error shutting down runtime: {e}")
@@ -1268,21 +1455,9 @@ def shutdown_server() -> None:
 
 
 def open_browser() -> None:
-    # Give the server a small moment to start up
-    time.sleep(0.5)
-    url = f"http://127.0.0.1:{running_port}"
-    import shutil
-    brave = shutil.which("brave") or shutil.which("brave-browser")
-    if brave:
-        import subprocess
-        from pathlib import Path
-        app_dir = Path.home() / ".config" / "brave-thursday-app"
-        app_dir.mkdir(parents=True, exist_ok=True)
-        subprocess.Popen(
-            [brave, f"--app={url}", f"--user-data-dir={app_dir}"],
-            start_new_session=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    else:
-        webbrowser.open(url)
+    from assistant.web_launch import WebLaunchError, open_web_app
+
+    try:
+        open_web_app(f"http://127.0.0.1:{running_port}")
+    except WebLaunchError as exc:
+        print(str(exc))

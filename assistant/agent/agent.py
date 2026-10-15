@@ -557,7 +557,11 @@ class Agent:
             f"{self._config.system_prompt}\n\n"
             f"Runtime: provider={provider}, model={model}, user={self._config.user_name}.\n"
             f"Tools: use them for all actions. After success, confirm briefly. "
-            f"Only request independent reads together; desktop and file mutations execute in order. Never expose secrets."
+            f"Only request independent reads together; desktop and file mutations execute in order. Never expose secrets. "
+            f"For a request to open a named website or creator channel, resolve its exact URL with read-only "
+            f"web_search or youtube_search, then call open_url once. Use an already matching search result "
+            f"without further discovery or query variants. Never pass URLs to open_path. A dispatched "
+            f"navigation is not proof of loaded content; observe read-only if needed, never reopen to verify."
         )
 
     def warmup_payload(self) -> tuple[list[ChatMessage], list[dict[str, Any]]]:

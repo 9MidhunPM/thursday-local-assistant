@@ -86,7 +86,7 @@ class SmokeTests(unittest.TestCase):
         config = load_config(config_path)
         self.assertTrue(config.voice.tts_enabled)
         self.assertTrue(config.voice.stt_enabled)
-        self.assertEqual(config.voice.tts_voice, "en-US-EmmaMultilingualNeural")
+        self.assertEqual(config.voice.tts_voice, "en-GB-RyanNeural")
 
     def test_runtime_builds(self) -> None:
         runtime = build_runtime(default_config_path())

@@ -69,8 +69,12 @@
   },
   "voice": {
     "tts_enabled": true,
-    "tts_voice": "en-US-EmmaMultilingualNeural",
-    "tts_rate": "+25%",
+    "tts_engine": "online",
+    "tts_local_voice": "bm_george",
+    "tts_speed": 1.0,
+    "tts_emergency_fallback": false,
+    "tts_voice": "en-GB-RyanNeural",
+    "tts_rate": "+0%",
     "stt_enabled": true,
     "stt_recognizer": "google",
     "stt_language": "en-US"
@@ -80,7 +84,7 @@
     "level": "INFO"
   },
   "agent": {
-    "user_name": "Midhun P M",
+    "user_name": "User",
     "max_tool_steps": 24,
     "max_parallel_tools": 4,
     "auto_extract": true,

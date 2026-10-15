@@ -1,12 +1,14 @@
 import { useEffect, useRef } from 'react'
 import type { AgentEvent, TaskState } from '@/types'
 import type { ChatAction } from '@/state/chatReducer'
+import { clientId } from '@/lib/client'
 
 interface Options {
   dispatch: (action: ChatAction) => void
-  onTtsAudio: (url: string, text: string) => void
+  onTtsAudio: (url: string, text: string, generation?: string) => void
   onTtsPreparing: () => void
   onTtsStop: () => void
+  onTtsSynthesisDone: () => void
   onStopVisualizer: () => void
   onInitConversation: (id: number | null) => void
   onConversationUpdated: (id: number, title: string) => void
@@ -21,6 +23,7 @@ export function useEventStream({
   onTtsAudio,
   onTtsPreparing,
   onTtsStop,
+  onTtsSynthesisDone,
   onStopVisualizer,
   onInitConversation,
   onConversationUpdated,
@@ -39,6 +42,7 @@ export function useEventStream({
     onTtsAudio,
     onTtsPreparing,
     onTtsStop,
+    onTtsSynthesisDone,
     onStopVisualizer,
     onInitConversation,
     onConversationUpdated,
@@ -52,6 +56,7 @@ export function useEventStream({
     onTtsAudio,
     onTtsPreparing,
     onTtsStop,
+    onTtsSynthesisDone,
     onStopVisualizer,
     onInitConversation,
     onConversationUpdated,
@@ -92,6 +97,8 @@ export function useEventStream({
             history: event.data.history,
           })
           initConv(event.data.conversation_id ?? null)
+          if (event.data.pending_confirms?.length) confReq?.(event.data.pending_confirms[0])
+          else confRes?.({ id: '', approved: false })
           break
         case 'model_ready':
           d({ type: 'SET_MODEL_READY' })
@@ -103,7 +110,8 @@ export function useEventStream({
           d({ type: 'SET_BUSY', busy: event.data.busy })
           break
         case 'user_message':
-          d({ type: 'APPEND_USER_MESSAGE', content: event.data.content })
+          if (event.data.client_id !== clientId)
+            d({ type: 'APPEND_USER_MESSAGE', content: event.data.content })
           break
         case 'token':
           d({ type: 'APPEND_TOKEN', chunk: event.data.chunk })
@@ -121,13 +129,16 @@ export function useEventStream({
           d({ type: 'FINALIZE_STREAMING', content: event.data.content })
           break
         case 'tts_audio':
-          audio(event.data.url, event.data.text)
+          audio(event.data.url, event.data.text, event.data.generation_id)
           break
         case 'tts_preparing':
           prepareAudio()
           break
         case 'tts_stop':
           stop()
+          break
+        case 'tts_synthesis_done':
+          cb.current.onTtsSynthesisDone()
           break
         case 'error':
           d({ type: 'SHOW_AGENT_ERROR', content: event.data.content })
@@ -153,7 +164,7 @@ export function useEventStream({
 
     function connect() {
       if (stoppedRef.current) return
-      const es = new EventSource(`${window.location.origin}/api/events`)
+      const es = new EventSource(`${window.location.origin}/api/events?client_id=${clientId}`)
       sourceRef.current = es
 
       es.onopen = () => {

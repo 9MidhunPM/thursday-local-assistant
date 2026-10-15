@@ -43,6 +43,7 @@ TOOL_GROUPS: dict[str, str] = {
     "fetch_page": "web",
     "search_and_fetch": "web",
     "open_google_search": "web",
+    "open_url": "web",
     "analyze_website": "web",
     "news": "web",
     "youtube_search": "web",
@@ -109,7 +110,7 @@ KEYWORD_GROUPS: list[tuple[tuple[str, ...], frozenset[str]]] = [
             "vscode",
             "terminal",
         ),
-        frozenset({"apps", "files"}),
+        frozenset({"apps", "files", "web"}),
     ),
     (
         ("spotify", "music", "song", "playlist", "play", "pause", "volume", "track", "artist"),
@@ -133,7 +134,7 @@ KEYWORD_GROUPS: list[tuple[tuple[str, ...], frozenset[str]]] = [
         frozenset({"web"}),
     ),
     (
-        ("youtube", "video", "watch"),
+        ("youtube", "video", "watch", "channel"),
         frozenset({"web", "media"}),
     ),
     (

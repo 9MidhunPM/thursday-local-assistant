@@ -4,14 +4,17 @@ import json
 import logging
 from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+from assistant.paths import private_dir
 from assistant.security import redact_secrets
 
 
 def redact_private_request_text(user_text: str) -> str:
-    """Avoid persisting email draft and inbox-analysis requests in logs."""
+    """Describe a request without retaining spoken or typed private content."""
     lowered = user_text.casefold()
     email_context = any(word in lowered for word in ("email", "gmail", "mail"))
     draft_action = any(word in lowered for word in ("compose", "draft", "send", "write"))
@@ -20,7 +23,7 @@ def redact_private_request_text(user_text: str) -> str:
         return "[email draft request redacted]"
     if email_context and inbox_action:
         return "[email inbox request redacted]"
-    return user_text
+    return f"[request content omitted; chars={len(user_text)}]"
 
 
 @dataclass(frozen=True)
@@ -31,7 +34,14 @@ class Loggers:
     error: logging.Logger
 
 
-class StructuredFormatter(logging.Formatter):
+class PrivateFormatter(logging.Formatter):
+    """Provider exception messages can contain request bodies and credentials."""
+
+    def formatException(self, exc_info) -> str:
+        return f"{exc_info[0].__name__}: [exception details omitted]"
+
+
+class StructuredFormatter(PrivateFormatter):
     """JSON formatter for structured logging."""
 
     def format(self, record: logging.LogRecord) -> str:
@@ -76,7 +86,9 @@ class StructuredFormatter(logging.Formatter):
         return json.dumps(log_data, ensure_ascii=False)
 
 
-def _build_logger(name: str, level: int, log_file: Path, structured: bool = False) -> logging.Logger:
+def _build_logger(
+    name: str, level: int, log_file: Path, structured: bool = False
+) -> logging.Logger:
     logger = logging.getLogger(name)
     logger.setLevel(level)
     logger.propagate = False
@@ -92,17 +104,18 @@ def _build_logger(name: str, level: int, log_file: Path, structured: bool = Fals
     if structured:
         formatter = StructuredFormatter(datefmt="%Y-%m-%dT%H:%M:%S")
     else:
-        formatter = logging.Formatter(
+        formatter = PrivateFormatter(
             fmt="%(asctime)s %(levelname)s %(message)s",
             datefmt="%Y-%m-%dT%H:%M:%S",
         )
     handler.setFormatter(formatter)
     logger.addHandler(handler)
+    log_file.chmod(0o600)
     return logger
 
 
 def setup_logging(directory: Path, level: str, structured: bool = False) -> Loggers:
-    directory.mkdir(parents=True, exist_ok=True)
+    private_dir(directory)
     level_value = logging.getLevelName(level.upper())
     if isinstance(level_value, str):
         level_value = logging.INFO
@@ -120,17 +133,19 @@ def log_model_interaction(
     response: str | None = None,
     tool_calls: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Log model interaction with structured data."""
-    extra: dict[str, Any] = {"user_text": redact_private_request_text(user_text)}
-    if response:
-        redacted_user = redact_private_request_text(user_text)
-        extra["response"] = (
-            "[private email response redacted]"
-            if redacted_user.startswith("[email ")
-            else response
-        )
+    """Keep useful request metrics without persisting conversation content."""
+    extra: dict[str, Any] = {"request_chars": len(user_text)}
+    if response is not None:
+        extra["response_chars"] = len(response)
     if tool_calls:
-        extra["tool_calls"] = redact_secrets(tool_calls)
+        extra["tool_calls"] = [
+            {
+                "name": call.get("name", "unknown"),
+                "argument_keys": sorted(call["arguments"])
+                if isinstance(call.get("arguments"), dict) else [],
+            }
+            for call in tool_calls
+        ]
     logger.info("model_interaction", extra=extra)
 
 
@@ -139,10 +154,10 @@ def log_tool_call(
     tool_name: str,
     arguments: dict[str, Any],
 ) -> None:
-    """Log tool invocation with secrets redacted."""
+    """Record which capability ran, without its private argument values."""
     logger.info(
         "tool_call",
-        extra={"tool": tool_name, "arguments": redact_secrets(arguments)},
+        extra={"tool": tool_name, "argument_keys": sorted(arguments)},
     )
 
 
@@ -153,12 +168,12 @@ def log_tool_result(
     result: dict[str, Any] | None = None,
     error: str | None = None,
 ) -> None:
-    """Log tool result with structured data."""
+    """Record result shape and status, excluding provider error payloads."""
     extra: dict[str, Any] = {"tool": tool_name, "success": success}
     if result:
         extra["result_keys"] = list(result.keys())
     if error:
-        extra["error"] = error
+        extra["error_present"] = True
         logger.error("tool_result", extra=extra)
     else:
         logger.info("tool_result", extra=extra)
@@ -170,11 +185,10 @@ def log_error(
     error: Exception | None = None,
     context: dict[str, Any] | None = None,
 ) -> None:
-    """Log error with structured context."""
-    extra: dict[str, Any] = {"message": message}
+    """Retain diagnostic types and context keys without exception payloads."""
+    extra: dict[str, Any] = {"diagnostic_chars": len(message)}
     if error:
         extra["error_type"] = type(error).__name__
-        extra["error_message"] = str(error)
     if context:
-        extra["context"] = redact_secrets(context)
+        extra["context_keys"] = sorted(context)
     logger.error("error", extra=extra)

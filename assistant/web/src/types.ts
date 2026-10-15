@@ -70,6 +70,7 @@ export interface TaskState {
 }
 
 export interface InitData {
+  pending_confirms?: { id: string; prompt: string; timeout_sec?: number }[]
   task?: TaskState | null
   busy: boolean
   model_ready: boolean
@@ -106,15 +107,16 @@ export type AgentEvent =
   | { type: 'model_ready'; data: Record<string, never> }
   | { type: 'model_log'; data: { line: string } }
   | { type: 'status'; data: { busy: boolean } }
-  | { type: 'user_message'; data: { content: string } }
+  | { type: 'user_message'; data: { content: string; client_id?: string } }
   | { type: 'token'; data: { chunk: string } }
   | { type: 'tool_call'; data: { tool: string; arguments: string | Record<string, unknown> } }
   | { type: 'tool_chunk'; data: { tool: string; chunk: string } }
   | { type: 'tool_result'; data: ToolResultData }
   | { type: 'final_response'; data: { content: string } }
   | { type: 'tts_preparing'; data: Record<string, never> }
-  | { type: 'tts_audio'; data: { url: string; text: string } }
+  | { type: 'tts_audio'; data: { url: string; text: string; generation_id?: string } }
   | { type: 'tts_stop'; data: Record<string, never> }
+  | { type: 'tts_synthesis_done'; data: { generation_id: string } }
   | { type: 'error'; data: { content: string } }
   | { type: 'conversation_updated'; data: { id: number; title: string } }
   | { type: 'conversation_deleted'; data: { id: number } }
