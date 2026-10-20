@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import itertools
 import logging
 import queue
 import re
 import shutil
+import socket
+import ssl
 import subprocess
 import sys
 import threading
@@ -52,6 +55,34 @@ def _provider_retry_seconds(error: Exception) -> int:
     if status == 429:
         return 60
     return TRANSIENT_RETRY_SECONDS
+
+
+def _provider_transport(error: Exception) -> tuple[str, int | None]:
+    """Classify connection failures without exposing endpoints or OS messages."""
+    os_error = getattr(error, "os_error", None)
+    if os_error is None and isinstance(error, OSError):
+        os_error = error
+    number = getattr(os_error, "errno", None)
+    if isinstance(number, bool) or not isinstance(number, int) or not -4096 <= number <= 4096:
+        number = None
+    if isinstance(os_error, socket.gaierror) or type(error).__name__ == "ClientConnectorDNSError":
+        label = "dns"
+    elif isinstance(error, TimeoutError) or number == errno.ETIMEDOUT:
+        label = "timeout"
+    elif (isinstance(error, ssl.SSLError) or isinstance(os_error, ssl.SSLError)
+          or type(error).__name__ in {
+              "ClientConnectorCertificateError", "ClientConnectorSSLError", "ClientSSLError",
+          }):
+        label = "tls"
+    elif number in {errno.ENETUNREACH, errno.EHOSTUNREACH}:
+        label = "unreachable"
+    elif number == errno.ECONNREFUSED:
+        label = "refused"
+    elif os_error is not None or isinstance(error, ConnectionError):
+        label = "connect"
+    else:
+        label = "other"
+    return label, number
 
 
 class TTSQueuePriority(IntEnum):
@@ -177,16 +208,19 @@ class EdgeTTS(TextToSpeech):
                     received_bytes = path.stat().st_size if path.is_file() else 0
                     path.unlink(missing_ok=True)
                     retry_seconds = _provider_retry_seconds(error)
+                    transport, error_number = _provider_transport(error)
                     with self._lock:
                         self._cloud_retry_after = time.monotonic() + retry_seconds
                     _log.warning(
                         "Online speech unavailable "
-                        "(%s, elapsed_ms=%d, received_bytes=%d, retry_after_s=%d); "
+                        "(%s, elapsed_ms=%d, received_bytes=%d, retry_after_s=%d, "
+                        "transport=%s, errno=%s); "
                         "attempting local speech.",
                         _provider_failure(error),
                         round((time.monotonic() - online_started) * 1000),
                         received_bytes,
                         retry_seconds,
+                        transport, error_number if error_number is not None else "unknown",
                     )
                 else:
                     await self._encode_audio(path.read_bytes(), path)

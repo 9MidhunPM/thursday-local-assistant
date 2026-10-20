@@ -1,6 +1,9 @@
 """Exercise the speech queue using asynchronous in-memory provider fixtures."""
 
 import asyncio
+import errno
+import socket
+import ssl
 import stat
 import sys
 import threading
@@ -217,6 +220,28 @@ def test_provider_failure_classification_prefers_only_http_status():
         status = 403
 
     assert tts_module._provider_failure(ProviderError("private response payload")) == "http_403"
+
+
+@pytest.mark.parametrize(("inner", "expected"), [
+    (socket.gaierror(socket.EAI_AGAIN, "private hostname"), ("dns", socket.EAI_AGAIN)),
+    (OSError(errno.ENETUNREACH, "private address"), ("unreachable", errno.ENETUNREACH)),
+    (OSError(errno.ECONNREFUSED, "private address"), ("refused", errno.ECONNREFUSED)),
+    (OSError(errno.ETIMEDOUT, "private address"), ("timeout", errno.ETIMEDOUT)),
+    (ssl.SSLError(1, "private certificate"), ("tls", 1)),
+    (OSError(errno.ECONNRESET, "private address"), ("connect", errno.ECONNRESET)),
+])
+def test_network_diagnostics_use_only_fixed_labels_and_numeric_errno(inner, expected):
+    outer = RuntimeError("private URL and credential")
+    outer.os_error = inner
+    result = tts_module._provider_transport(outer)
+    assert result == expected
+    assert "private" not in repr(result)
+
+
+def test_network_diagnostics_reject_non_numeric_errno():
+    error = RuntimeError("private response")
+    error.os_error = SimpleNamespace(errno="private host")
+    assert tts_module._provider_transport(error) == ("connect", None)
 
 
 @pytest.mark.parametrize(("status", "expected"), [(401, 300), (403, 300), (429, 60), (503, 15)])
