@@ -24,8 +24,12 @@ assistant with configurable local/cloud inference and intentionally visible auto
 1. Start from a clean desktop and close unrelated notifications, terminals, email, and private tabs.
 2. Use a demo-only `.env`; never show API keys, browser tokens, personal email contents, or logs that
    may contain private prompts.
-3. Run `./run_with_llm.sh`, then confirm `http://127.0.0.1:5005/health` reports `model_ready: true`.
+3. Complete the [native installation](NATIVE_DESKTOP.md#install-and-inspect) first. Run
+   `./run_with_llm.sh` to open native chat, then choose **Web app** or run `./run_web.sh` for the
+   detailed web interface used below. Confirm `http://127.0.0.1:5005/health` reports
+   `model_ready: true`; this alone does not verify provider authentication or speech.
 4. Confirm the Brave Helper status, microphone, TTS voice, Spotify MPRIS player, Kitty, and Codex CLI.
+   Check native and browser speech separately: the surface that requested a reply owns its playback.
 5. Put a harmless demo file in an allowed directory and choose a non-sensitive Calendar event.
 6. Reset Ritual with **Reset demo data** and clear Thursday's demo conversation.
 7. Increase the UI/browser zoom enough for tool cards and confirmation banners to be readable.
@@ -36,8 +40,8 @@ assistant with configurable local/cloud inference and intentionally visible auto
 
 ### 1. Establish the product — 45 seconds
 
-Show the Thursday window, conversation sidebar, model/health status, voice toggle, logs button, and
-the new **Codex Project** button.
+Show native chat and its **Web app** handoff, then use the detailed web interface to show the
+conversation sidebar, model/health status, voice toggle, logs button, and **Codex Project** button.
 
 Say:
 
@@ -115,7 +119,9 @@ Hold **Super+Alt** and say:
 > “Thursday, what is my system status?”
 
 Show the live transcript overlay, streamed response, and spoken answer. Mention that the overlay does
-not steal focus, which is useful while coding or presenting another window.
+not steal focus, which is useful while coding or presenting another window. This request plays through
+the native companion even when the web app is open. Typed native replies are silent unless
+**Speak typed replies** is enabled; **Voice off** mutes native playback.
 
 If venue audio is unreliable, show the waveform and transcript but keep TTS muted.
 
@@ -217,7 +223,8 @@ For a shorter pitch, keep only:
 ## Claims you can safely make
 
 - Thursday supports local llama.cpp and multiple OpenAI-compatible cloud providers.
-- It exposes CLI, web, desktop-launcher, hotkey, and voice interaction paths.
+- It exposes CLI and web interfaces plus a persistent native companion with chat, approvals,
+  Stop/Resume, hotkeys, and voice controls.
 - It uses deterministic tools, smart filtering, local memory, visible tool results, and configurable
   confirmation/security policies.
 - It integrates with the author's Linux/Hyprland desktop and normal Brave profile.

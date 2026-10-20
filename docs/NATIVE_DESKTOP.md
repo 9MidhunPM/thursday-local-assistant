@@ -7,8 +7,9 @@ bar's visibility and unrelated desktop modules under their existing controls.
 ## Prerequisites
 
 Use an existing Hyprland graphical session with Quickshell, Qt 6 Multimedia, systemd user services,
-a working microphone, and the system libraries needed to build PyAudio against PortAudio. Install
-Python dependencies deliberately from the checkout:
+a working microphone, and the system libraries needed to build PyAudio against PortAudio.
+Install `ffmpeg` for speech normalization and decoded waveform levels, and PipeWire's `pw-dump`
+for native output-route feedback. Install Python dependencies deliberately from the checkout:
 
 ```bash
 python3 -m venv .venv
@@ -214,6 +215,12 @@ stream in your volume mixer as well as the system output. Do not reset the entir
 or raise unrelated applications to repair one stream. `ffmpeg` supplies decoded visualization
 levels; `pw-dump` supplies the PipeWire route observation.
 
+Online-speech warnings contain fixed transport labels (`dns`, `tls`, `timeout`, `unreachable`,
+`refused`, `connect`, or `other`) and a numeric `errno` when available, otherwise `unknown`.
+Use these fields with the failure class, received-byte count, and retry delay to distinguish a
+connection failure from an HTTP rejection. These diagnostics omit provider messages, endpoints,
+credentials, and speech text; share the bounded fields instead of full logs.
+
 The optional API token is sent in headers by the native helper and hotkeys. It never appears in
 QML, process arguments, or event URLs. When configured, the web app asks for the local access token
 and exchanges it for a one-hour HttpOnly, SameSite=Strict cookie scoped to `/api`. The operator
@@ -268,10 +275,16 @@ A model/voice change does not require deleting databases or uninstalling the com
 
 ## Acceptance scenarios
 
-The checked development baseline has 422 passing Python tests, one known dependency `aifc`
-deprecation warning, a passing Vite 7.3.7 build, and zero findings in the checked npm audit.
+Integration checks on 2026-10-20 passed 429 Python tests with one known dependency `aifc`
+deprecation warning. Python error lint, TypeScript checks, the Vite 7.3.7 build, and Qt6 QML lint
+passed; the npm audit reported zero vulnerabilities. A fresh graphical-session doctor found all
+required Python dependencies and session fields available, both services active and enabled with
+zero restarts, and no problems. This establishes service readiness on the checked host.
 Controlled tests cover fragmented SSE, token headers, speech ordering/interruption, expired
 approvals, microphone state ownership, dependency failures, installer conflicts, and rollback.
+
+The live interaction and audio checks below were recorded during native companion development.
+They are historical evidence and were not repeated by the integration checks above.
 
 A separate live Quickshell fixture exercised Allow, Deny, Stop, and Resume through the rendered
 controls and real HTTP backend, with one request per action and the expected checkpoint lineage.

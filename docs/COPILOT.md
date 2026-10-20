@@ -141,11 +141,13 @@ Rerun deliberately: `--live` makes paid requests, and fixtures do not touch the 
 
 ## Verification and limits
 
-The native integration baseline has 422 passing Python tests, with one known dependency `aifc`
+Integration checks on 2026-10-20 passed 429 Python tests, with one known dependency `aifc`
 deprecation warning. Controlled coverage includes Responses replay, tool validation, checkpoints,
 memory correction/deletion, guarded desktop approval, fragmented SSE, authentication, voice
 ownership, speech ordering/interruption, and installer rollback conflicts. The Vite 7.3.7 production
-build passes and the checked npm audit reports zero vulnerabilities.
+build, TypeScript checks, Python error lint, and Qt6 QML lint passed; the npm audit reported zero
+vulnerabilities. The graphical-session doctor reported both services active and enabled with zero
+restarts and no problems.
 
 Live checks are recorded separately in the [native acceptance guide](NATIVE_DESKTOP.md#acceptance-scenarios).
 Service readiness, rendered UI, human microphone/playback confirmation, and a real model-driven

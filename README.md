@@ -68,8 +68,9 @@ chmod 600 .env
 
 Run `cp` only for a new configuration; keep an existing `.env`. PyAudio requires the system's
 PortAudio development support. The native integration also needs a running Hyprland session,
-Quickshell with Qt Multimedia, systemd user services, and microphone access. See the
-[prerequisites](docs/NATIVE_DESKTOP.md#prerequisites) before installing desktop configuration.
+Quickshell with Qt Multimedia, systemd user services, and microphone access. Install `ffmpeg`
+for speech normalization and measured waveforms, and PipeWire's `pw-dump` for output-route feedback.
+See the [prerequisites](docs/NATIVE_DESKTOP.md#prerequisites) before installing desktop configuration.
 
 For a CLI/web installation without Hyprland, install the base package instead and set
 `THURSDAY_HYPRUSE=0`. `run.sh` checks the existing environment; it never installs dependencies.
@@ -186,6 +187,18 @@ start from `assistant/config/config.safe.example.json` and explicitly choose per
 Read/write roots, shell policy, observed desktop targets, and action confirmations are separate
 controls; a tool result must support any completion claim.
 
+To use the safer profile in a foreground session, stop any installed backend first, then run:
+
+```bash
+./run.sh --config assistant/config/config.safe.example.json --web
+```
+
+The file's defaults disable shell execution and Hypruse, restrict writes to the checkout, and select
+local inference. Reads still include your home directory. The checkout's `.env` and exported
+environment variables override the selected file, including `LLM_PROVIDER`, `LLM_MODEL`,
+`LLM_BASE_URL`, `THURSDAY_ALLOW_SHELL`, `THURSDAY_HYPRUSE`, and the path settings. Review those
+values before starting; `--config` does not change the installed service's configuration.
+
 Keep the service on loopback. Non-loopback binding requires `THURSDAY_ALLOW_REMOTE=1`; configure
 a token before deliberately exposing it. The native transport only accepts loopback addresses.
 When a token is configured, the web app asks for it and exchanges the header credential for a
@@ -236,10 +249,12 @@ npm run build
 npm audit
 ```
 
-The native desktop verification baseline is **422 passing Python tests**, with one known
-`aifc` deprecation warning from a dependency. The Vite 7.3.7 production build passes and the
-checked dependency audit reports zero vulnerabilities. This baseline covers controlled fixtures;
-it does not establish successful microphone transcription or spoken playback on every machine.
+Integration checks on **2026-10-20** passed **429 Python tests**, with one known `aifc`
+deprecation warning from a dependency. Python error lint, TypeScript checks, the Vite 7.3.7
+production build, and Qt6 QML lint passed; the npm audit reported zero vulnerabilities.
+The graphical-session doctor also reported both services active and enabled with zero restarts
+and no problems. These checks cover controlled fixtures and service readiness;
+they do not establish successful microphone transcription or spoken playback on every machine.
 The [native acceptance scenarios](docs/NATIVE_DESKTOP.md#acceptance-scenarios) keep service
 readiness, rendered interaction, speech, and real desktop execution separate.
 

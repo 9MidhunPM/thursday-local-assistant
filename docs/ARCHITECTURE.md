@@ -20,8 +20,8 @@ flowchart TD
     Agent --> Hypruse[Owned Hypruse MCP child]
     Agent <--> Store[Local SQLite history and memory]
     Server --> TTS[Ordered speech synthesis queue]
-    TTS --> Neural[Local Kokoro worker]
-    TTS --> Edge[Optional Edge TTS service]
+    TTS --> Edge[Default Edge TTS service]
+    TTS --> Neural[Optional local Kokoro worker]
     TTS --> Server
     Server -->|Client and generation scoped audio| Helper
 ```
