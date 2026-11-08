@@ -13,7 +13,7 @@
 
 **🖥️ Desktop actions · 🎙️ Voice · 🧠 Personal memory · 🔎 Research · 🛠️ Codex workspaces**
 
-[🚀 Get started](#quick-start) · [✨ Explore features](#capabilities) · [🎬 Watch demos](#demos) · [📚 Documentation](docs/ARCHITECTURE.md)
+[🚀 Get started](#quick-start) · [✨ Explore features](#capabilities) · [🎬 Watch demos](#demos) · [🧩 Architecture](#architecture) · [📚 Guides](#-pick-your-next-page)
 
 </div>
 
@@ -76,6 +76,37 @@ That idea still guides it: useful work inside your terminal, file manager, brows
 player, with visible actions and clear boundaries. Local and cloud models use the same agent,
 tools, and local memory. The checked-in default is GPT-6 Luna through the Responses API;
 local llama.cpp and other OpenAI-compatible providers remain configurable.
+
+<a id="architecture"></a>
+## 🧩 How Thursday works
+
+```mermaid
+flowchart LR
+    Native["🖥️ Quickshell companion"] --> Server["⚡ Local Python backend"]
+    Web["🌐 React web app"] --> Server
+    CLI["⌨️ CLI"] --> Server
+    Server --> Agent["🧭 Agent + task checkpoints"]
+    Agent <--> Model["🤖 Configured local or cloud model"]
+    Agent <--> Memory["🧠 SQLite history + personal memory"]
+    Agent --> Tools["🛠️ Files · research · apps · Codex"]
+    Agent --> Desktop["🖱️ Hypruse desktop bridge"]
+    Server --> Voice["🎙️ STT + ordered TTS"]
+```
+
+**One backend owns the work.** Clients submit commands and observe the same task state. The
+agent builds bounded context, discovers relevant tools, asks for approval when required, and
+records observed outcomes. Stop interrupts cooperative work; it cannot undo an action already
+completed. Detailed process ownership and data flow live in the [architecture guide](docs/ARCHITECTURE.md).
+
+| Layer | Where to look |
+| --- | --- |
+| 🧭 Agent, tasks & checkpoints | [`assistant/agent/`](assistant/agent/) |
+| 🧠 Personal memory | [`assistant/memory/`](assistant/memory/) |
+| 🛠️ Tools & integrations | [`assistant/tools/`](assistant/tools/) · [`assistant/integrations/`](assistant/integrations/) |
+| 🎙️ Speech pipeline | [`assistant/voice/`](assistant/voice/) |
+| 🌐 React interface | [`assistant/web/`](assistant/web/) |
+| 🖥️ Native QML companion | [`desktop/quickshell/`](desktop/quickshell/) |
+| 📦 Contained Codex projects | [`codex_workspace/`](codex_workspace/) |
 
 <a id="quick-start"></a>
 ## 🚀 Quick start
@@ -325,6 +356,58 @@ unattended desktop reliability.
 These recordings show earlier versions; current native controls and lifecycle are documented
 above. The [demo guide](docs/DEMO.md) contains workflow prompts. The repository also includes
 [Ritual](codex_workspace/todo-app/README.md), a local habit-tracker demo produced through Codex.
+
+## 🧭 What works today, and what comes next
+
+Thursday is a hands-on desktop assistant, not a guarantee of unattended execution. Keep these
+distinctions in mind when trying it or building on it:
+
+| ✅ Available now | 🚧 Still on the roadmap |
+| --- | --- |
+| Personal facts, preferences, correction and deletion | Document ingestion with source citations |
+| Durable task checkpoints and Stop/Resume | Durable scheduled reminders |
+| Interactive tools and confirmed actions | Reviewed, reusable routines |
+| Contained Codex launch in a visible terminal | Codex job completion tracking |
+
+A Codex launch confirms that a session opened, not that its project is finished. Filename search
+is not a semantic index of every document. Current tool selection starts with keyword groups
+and discovery; more capable routing needs measured evaluation. See [next work](docs/COPILOT.md#rollback-and-next-work)
+for the existing roadmap rather than treating planned features as shipped.
+
+## 🩺 Quick troubleshooting
+
+| Symptom | First thing to check |
+| --- | --- |
+| Native chat or shortcuts do not respond | Run `.venv/bin/python -m assistant.desktop_install doctor`; verify the supported desktop layout and both user services. |
+| Microphone recording or transcription fails | Check microphone access, PyAudio/PortAudio, and the configured STT service. Service readiness alone does not prove microphone capture works. |
+| Speech fails or sounds wrong | Review the selected TTS engine and dependencies. Edge needs network access; local Kokoro must be installed explicitly. |
+| Backend appears to start twice | On an installed desktop, use `systemctl --user restart thursday.service`, not another foreground server. |
+| Local model does not respond | Start llama.cpp separately and check the configured host, port, model path, and server binary. |
+| Gmail or Calendar is unavailable | Inspect the managed Brave Helper and the signed-in browser profile. Installing the companion does not install browser policies. |
+| A task pauses or is interrupted | Review its evidence and checkpoint in the web app before resuming. Completed actions are not rolled back by Stop. |
+
+For recovery and uninstall, use the [native desktop guide](docs/NATIVE_DESKTOP.md), which explains
+managed-file backups and conflict handling. Avoid deleting runtime databases as a shortcut.
+
+## 📚 Pick your next page
+
+| Guide | Start here when you want to… |
+| --- | --- |
+| [🖥️ Native desktop](docs/NATIVE_DESKTOP.md) | Install, diagnose, configure voice, or safely roll back the companion |
+| [🧩 Architecture](docs/ARCHITECTURE.md) | Understand processes, request flow, tools, storage, and trust boundaries |
+| [🧠 Copilot behavior](docs/COPILOT.md) | Understand routing, memory, task recovery, evaluation, and limitations |
+| [🎬 Demo guide](docs/DEMO.md) | Try workflows and prepare a demonstration |
+| [🛠️ Codex workspace](codex_workspace/README.md) | Understand the contained project-launch workflow |
+| [⚙️ Environment template](.env.example) | Find model, voice, server, and integration settings |
+| [🛡️ Safer profile](assistant/config/config.safe.example.json) | Start with shell and desktop automation disabled, then review overrides |
+
+### 🤝 Contributing thoughtfully
+
+Keep changes focused, add regression coverage for behavior changes, and run the checks above.
+Describe what you actually verified, especially for desktop, audio, and provider-dependent flows.
+Never commit keys, private configuration, recordings, captures, memory databases, or personal
+workspace artifacts. For UI or workflow proposals, distinguish the current behavior from the
+intended improvement and include reproduction steps.
 
 ## 📄 License
 
