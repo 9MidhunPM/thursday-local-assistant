@@ -1,58 +1,83 @@
-# Thursday
+<div align="center">
 
-**A desktop AI that does the work where you can see it.**
+# ⚡ THURSDAY
 
-Thursday connects a configurable AI model to real tools for files, apps, research, Gmail,
-Calendar, Spotify, personal memory, and contained Codex project sessions. It runs a local
-Python server with a native Quickshell companion, a React web app, and a terminal interface.
-The default model is GPT-6 Luna through the Responses API; local llama.cpp and other
-OpenAI-compatible providers remain configurable.
+### Your desktop. Your tools. Your AI copilot.
 
-The native companion handles chat, push-to-talk, spoken replies, approvals, and task controls
-without depending on whether the desktop bar or a browser window is open. Thursday reports
-observed results and keeps durable checkpoints for interrupted work.
+**A JARVIS-inspired Linux companion that does the work where you can see it.**
 
-**Local process and storage do not mean offline processing.** The default model uses a cloud
-API, Google speech recognition receives recorded audio, and the default Edge TTS voice receives
-response text. The optional local neural voice runs on the machine.
-Desktop captures and relevant context can reach the configured model during requested tasks.
-See [privacy and data flow](docs/NATIVE_DESKTOP.md#privacy-and-data-flow).
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![React](https://img.shields.io/badge/React-Web_App-149ECA?style=for-the-badge&logo=react&logoColor=white)
+![Hyprland](https://img.shields.io/badge/Hyprland-Native_Companion-00A6A6?style=for-the-badge&logo=linux&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-Local_Memory-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
 
-## Why Thursday exists
+**🖥️ Desktop actions · 🎙️ Voice · 🧠 Personal memory · 🔎 Research · 🛠️ Codex workspaces**
 
-Thursday started as a local-only, JARVIS-style experiment with llama.cpp on personal hardware.
-The aim was an assistant that could help inside the terminal, file manager, music player,
-browser, and keyboard flow: find the file, open the app, or prepare the draft while keeping
-the work visible and under the user's control.
+[🚀 Get started](#quick-start) · [✨ Explore features](#capabilities) · [🎬 Watch demos](#demos) · [📚 Documentation](docs/ARCHITECTURE.md)
 
-That origin still shapes the project. Local inference remains an option alongside cloud models;
-both use the same agent, visible tools, local memory, and explicit action boundaries. The native
-companion brings those controls into the desktop, while the web app provides the detailed view.
+</div>
 
-## Interfaces and capabilities
+---
 
-| Surface | Purpose |
-| --- | --- |
-| Native Quickshell companion | Chat, microphone, voice HUD, approvals, Stop/Resume, local voice settings |
-| Web app at `http://127.0.0.1:5005` | Detailed history, structured tool results, task evidence, memory review, Codex project controls |
-| CLI | Terminal conversation through the same tools and model configuration |
+Thursday brings an AI assistant into the place you already work: your Linux desktop.
+Find a file, control Spotify, inspect a window, research a topic, prepare an email draft,
+or open a contained coding session without turning every task into a tour of different apps.
 
-- **Desktop control:** Hypruse observes the active session, addresses windows explicitly, uses
-  accessible controls where available, and returns transient captures when needed.
-- **Files and research:** indexed filename search, file operations within configured roots,
-  guarded terminal commands, source-backed research, and visual website reviews.
-- **Personal workflows:** unsent Gmail drafts, inbox summaries, confirmed Calendar writes,
-  Spotify control, and grounded personal memory with correction and deletion controls.
-- **Tasks:** saved outcomes, cooperative cancellation, resumable checkpoints, and approval
-  before consequential actions. Completed actions remain completed after cancellation.
-- **Voice:** one backend microphone controller, bounded recordings, ordered speech playback,
-  and interruption when a new voice request starts. Typed native replies are silent by default.
-- **Codex projects:** refine a brief and launch a visible Kitty session inside
-  `codex_workspace/<project-name>`, without passing Thursday's provider credentials to Codex.
+A local Python backend connects a configurable model to real tools. A native **Quickshell
+companion**, a **React web app**, and a **CLI** share the same assistant. Tool results,
+approvals, task controls, and recoverable checkpoints keep the work visible.
 
-[Native desktop setup](docs/NATIVE_DESKTOP.md) · [Architecture](docs/ARCHITECTURE.md) ·
-[Copilot behavior and evaluation](docs/COPILOT.md) · [Demo guide](docs/DEMO.md)
+> **Local-first, not automatically offline.** Storage and the server are local. The default
+> model, Google speech recognition, and Edge TTS use external services. A local LLM and optional
+> Kokoro voice are separate choices. Review [privacy and data flow](docs/NATIVE_DESKTOP.md#privacy-and-data-flow)
+> before sharing prompts, microphone audio, desktop captures, or personal context.
 
+<a id="capabilities"></a>
+## ✨ More than a chat window
+
+| | Capability | What it brings to your day |
+| :---: | --- | --- |
+| 🖥️ | **Desktop awareness & control** | Hypruse observes the live session, targets specific windows, and uses accessible controls or transient captures when needed. |
+| 📂 | **Files & terminal** | Indexed filename search, file operations inside configured roots, and guarded terminal commands. |
+| 🔎 | **Research & visual reviews** | Search the web, fetch source material, inspect websites, and present grounded findings. |
+| 🧠 | **Memory you can inspect** | Personal facts and preferences with provenance, correction, retrieval, and deletion controls. |
+| ✉️ | **Everyday integrations** | Inbox summaries, unsent Gmail drafts, confirmed Calendar writes, and Spotify playback controls. |
+| 🎙️ | **A voice in your desktop** | Push-to-talk, a non-focus-stealing HUD, ordered spoken replies, and interruption when a new voice request starts. |
+| ⏯️ | **Work you can stop & resume** | Saved task outcomes, cooperative cancellation, resumable checkpoints, and approval recovery. |
+| 🛠️ | **A doorway into Codex** | Refine a project brief and open a visible Kitty session in a contained project workspace. |
+
+### 💬 Try asking
+
+These are example requests, not a promise that every application or machine is supported.
+Available tools depend on your configuration, signed-in services, and desktop session.
+
+- **📂 “Find my networking PDF and open it.”** Search for the file without digging through folders.
+- **🎵 “Play my playlist on Spotify.”** Use Spotify's own player instead of controlling an arbitrary media app.
+- **🔎 “Research this topic and show me the sources.”** Bring the evidence into the conversation.
+- **✉️ “Draft an email to my teammate, but don't send it.”** Prepare a message in the signed-in browser.
+- **🧠 “Remember that I prefer short answers.”** Store a preference you can later correct or forget.
+- **🛠️ “Help me turn this idea into a Codex project.”** Refine the brief and launch the coding workspace.
+
+### 🎛️ Three ways to work
+
+| Surface | Best for | What you get |
+| --- | --- | --- |
+| **🖥️ Native companion** | Staying in your desktop flow | Chat, microphone, voice HUD, approvals, Stop/Resume, and local voice settings |
+| **🌐 Web app** | Seeing the full picture | History, structured tool results, task evidence, memory review, and Codex project controls at `http://127.0.0.1:5005` |
+| **⌨️ CLI** | Terminal-first sessions | Conversation through the same tools and model configuration |
+
+The native companion does not depend on the bar or a browser staying open. Closing chat leaves
+the backend and keyboard service available. Typed native replies are silent by default.
+
+### 🌱 Built from a local-first experiment
+
+Thursday began as a local-only, JARVIS-style experiment with llama.cpp on personal hardware.
+That idea still guides it: useful work inside your terminal, file manager, browser, and music
+player, with visible actions and clear boundaries. Local and cloud models use the same agent,
+tools, and local memory. The checked-in default is GPT-6 Luna through the Responses API;
+local llama.cpp and other OpenAI-compatible providers remain configurable.
+
+<a id="quick-start"></a>
 ## Quick start
 
 From the checkout, create an environment and install the desktop extras:
