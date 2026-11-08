@@ -78,9 +78,23 @@ tools, and local memory. The checked-in default is GPT-6 Luna through the Respon
 local llama.cpp and other OpenAI-compatible providers remain configurable.
 
 <a id="quick-start"></a>
-## Quick start
+## 🚀 Quick start
 
-From the checkout, create an environment and install the desktop extras:
+### 1 · Choose your setup
+
+**Python 3.11+ is required.** Choose the native path for the supported Hyprland/Quickshell
+layout, or start with CLI/web if you do not use that desktop. Native setup also installs user
+services and desktop integration, so inspect the dry run before applying it.
+
+| Path | Install | Requirements |
+| --- | --- | --- |
+| 🖥️ Native desktop | `.[hypruse,hotkeys,voice,desktop]` | Live Hyprland session, supported Quickshell layout, systemd user services, microphone/input access |
+| 🌐 CLI / web | `.` | Python environment and a reachable configured model; set `THURSDAY_HYPRUSE=0` |
+| 🧑‍💻 Contributor | `.[dev]` in addition to your chosen path | Python checks; Node.js/npm for the React app |
+
+### 2 · Install the package
+
+For the native desktop path:
 
 ```bash
 git clone https://github.com/9MidhunPM/thursday-local-assistant.git Thursday
@@ -97,10 +111,17 @@ Quickshell with Qt Multimedia, systemd user services, and microphone access. Ins
 for speech normalization and measured waveforms, and PipeWire's `pw-dump` for output-route feedback.
 See the [prerequisites](docs/NATIVE_DESKTOP.md#prerequisites) before installing desktop configuration.
 
-For a CLI/web installation without Hyprland, install the base package instead and set
-`THURSDAY_HYPRUSE=0`. `run.sh` checks the existing environment; it never installs dependencies.
+For a CLI/web installation without Hyprland, use the base install **instead of** the desktop
+extras in the command above:
 
-### Configure the model and voice
+```bash
+.venv/bin/python -m pip install -e .
+```
+
+Set `THURSDAY_HYPRUSE=0` in `.env`. `run.sh` checks the existing environment; it never installs
+dependencies. Optional voice and app integrations still need their own system prerequisites.
+
+### 3 · Configure your model & voice
 
 Edit the ignored `.env`:
 
@@ -150,7 +171,7 @@ Start the model separately with `./run_vulkan_server.sh` or your existing llama.
 Choosing a local model does not change the configured STT/TTS providers. For another compatible
 API, use `LLM_PROVIDER=custom`, `LLM_BASE_URL`, `LLM_MODEL`, and `LLM_API_KEY`.
 
-### Install the native companion
+### 4 · Install the native companion (desktop path)
 
 Run from your graphical session:
 
@@ -178,7 +199,7 @@ Closing chat keeps the server and keyboard service available. Open the settings 
 The header's **Web app** button and the application menu's **Thursday Web** entry open
 the detailed interface. Repeated launches focus its existing dedicated window.
 
-### Other launch modes
+### 5 · Launch your preferred surface
 
 ```bash
 ./run.sh                         # CLI with local HTTP server
@@ -193,7 +214,7 @@ The two desktop wrappers require the native installation. They do not create a s
 or stop the server when a window closes. For an installed desktop, manage the backend with
 `systemctl --user restart thursday.service` rather than running a second foreground server.
 
-## Configuration and boundaries
+## ⚙️ Configuration & action boundaries
 
 | Setting | Location / behavior |
 | --- | --- |
@@ -235,7 +256,7 @@ Generated audio and captures are transient; logs, recordings, local configuratio
 screenshots, and personal workspace artifacts must stay out of commits. Git ignore rules are a
 convenience, not a substitute for reviewing each staged change.
 
-## Browser and Codex integrations
+## 🔌 Connect your everyday tools
 
 Gmail, Calendar, and Instagram use the managed Thursday Brave Helper in the normal signed-in
 profile. Install and inspect it explicitly:
@@ -261,7 +282,7 @@ optional model identifier. **Refine with Thursday** asks for material missing de
 **Open Codex in Kitty** launches the contained interactive session. The visible terminal is the
 source of truth for completion. See the [workspace guide](codex_workspace/README.md).
 
-## Development and verification
+## 🧪 Development & verification
 
 ```bash
 .venv/bin/python -m pip install -e '.[dev]'
@@ -293,7 +314,8 @@ The retained [Luna comparison](docs/COPILOT.md#luna-comparison) describes a date
 24-case evaluation. `--live` deliberately makes provider requests. It is not a guarantee of
 unattended desktop reliability.
 
-## Watch Thursday in action
+<a id="demos"></a>
+## 🎬 Watch Thursday in action
 
 - [Files, Gmail drafts, and Calendar](https://drive.google.com/file/d/1VBo7DjoN34oAEptECPhUGLXbTuoWGxJp/view?usp=drive_link)
 - [System status and Spotify](https://drive.google.com/file/d/13Sw3TUYcaSJo1eIMX1XZZqWVLdZNHmjq/view?usp=drive_link)
@@ -304,6 +326,7 @@ These recordings show earlier versions; current native controls and lifecycle ar
 above. The [demo guide](docs/DEMO.md) contains workflow prompts. The repository also includes
 [Ritual](codex_workspace/todo-app/README.md), a local habit-tracker demo produced through Codex.
 
-## License
+## 📄 License
 
-Personal project — add a license of your choice before publishing.
+No license file is currently included in this repository. Do not assume an open-source license
+or unrestricted reuse rights; a license must be added by the project owner to define them.
