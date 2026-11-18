@@ -20,6 +20,7 @@ import time
 import uuid
 from collections import OrderedDict
 
+from assistant.integrations.desktop_policy import key_parts, needs_approval
 from assistant.tools.base import BaseTool, ToolMetadata
 
 OBSERVATIONS = {"desktop", "screenshot", "zoom", "ui", "marks", "binds", "wait_for"}
@@ -119,6 +120,95 @@ class HypruseConnectionError(RuntimeError):
         super().__init__(_ERROR_MESSAGES[code])
 
 
+def _failure(code, message, *, delivery="not_delivered", pause=False, **evidence):
+    verification = {
+        "not_delivered": "The requested operation was not delivered.",
+        "uncertain_delivery": "Delivery is uncertain. Observe the desktop before retrying.",
+        "partial_delivery": "Some steps ran. Observe the desktop before continuing.",
+    }
+    return {
+        "success": False,
+        "error": message,
+        "error_code": code,
+        "delivery": delivery,
+        "blocks_following_actions": True,
+        "pause": pause,
+        "verification": verification[delivery],
+        **evidence,
+    }
+
+
+def _reply_failure(operation, raw, text, step_count):
+    """Hypruse 0.11 carries several status replies in normal MCP text."""
+    head = text[0] if text else ""
+    if raw.get("isError"):
+        error = " ".join(text) or "The desktop operation failed."
+        denied = bool(
+            re.search(r"seat moved|window .* not found|holding the keyboard", error, re.IGNORECASE)
+        )
+        uncertain = operation not in OBSERVATIONS and not denied
+        return _failure(
+            "desktop_action_error", error,
+            delivery="uncertain_delivery" if uncertain else "not_delivered",
+            pause=uncertain or denied,
+        )
+    if operation not in OBSERVATIONS and (
+        head.startswith("DRY RUN, nothing was delivered:")
+        or head.startswith("sequence (DRY RUN, nothing was delivered):")
+    ):
+        return _failure("dry_run", "Hypruse is in dry-run mode.")
+    if operation == "wait_for":
+        if head.startswith("timeout: no matching "):
+            return _failure("observation_timeout", head)
+        if head.startswith("event socket unavailable:"):
+            return _failure("observation_unavailable", "The desktop event socket is unavailable.")
+    if operation == "click_ui":
+        if re.search(r" is ambiguous \(\d+ candidates\); call again with index=N", head):
+            return _failure("ambiguous_control", head)
+        if head.startswith(("no matching ", "accessibility read failed:")) or (
+            " exposes no accessibility tree; use screenshot + zoom instead" in head
+        ):
+            return _failure("control_unavailable", head)
+    if operation == "launch" and head.startswith("launched, but no new window appeared"):
+        return _failure("launch_unverified", head, delivery="uncertain_delivery", pause=True)
+    if operation == "sequence" and head.startswith("sequence:"):
+        full = re.match(r"sequence: all (\d+)/(\d+) steps ran\b", head)
+        stopped = re.match(r"sequence: stopped after (\d+)/(\d+) steps, ([^\n]+)", head)
+        if full and int(full[1]) == int(full[2]) == step_count:
+            return None
+        completed = min(int(stopped[1]), step_count) if stopped else 0
+        if re.search(r"(?m)^\[\d+\] \w+: ERROR ", head):
+            completed = max(0, completed - 1)
+        return _failure(
+            "sequence_interrupted",
+            f"{head.splitlines()[0]}. Observe the desktop before continuing.",
+            delivery="partial_delivery" if completed else "uncertain_delivery",
+            pause=True,
+            completed_steps=completed,
+        )
+    return None
+
+
+def _window(snapshot, address):
+    return next(
+        (item for item in (snapshot or {}).get("windows", []) if item.get("address") == address),
+        None,
+    )
+
+
+def _same_window(before, current, address, *, check_title=False):
+    original, fresh = _window(before, address), _window(current, address)
+    identity = ("class", "pid", "title") if check_title else ("class", "pid")
+    return original is not None and fresh is not None and not fresh.get("hidden") and all(
+        original.get(key) is None or original[key] == fresh.get(key) for key in identity
+    )
+
+
+def _active_address(snapshot):
+    active = (snapshot or {}).get("active_window") or (snapshot or {}).get("active")
+    return active.get("address") if isinstance(active, dict) else active
+
+
 class HypruseBridge:
     def __init__(self, registry, *, startup_timeout=15, call_timeout=30):
         self.registry = registry
@@ -146,10 +236,15 @@ class HypruseBridge:
 
     @staticmethod
     def _session_present():
-        return all(os.environ.get(key) for key in (
-            "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS",
-            "HYPRLAND_INSTANCE_SIGNATURE",
-        ))
+        return all(
+            os.environ.get(key)
+            for key in (
+                "WAYLAND_DISPLAY",
+                "XDG_RUNTIME_DIR",
+                "DBUS_SESSION_BUS_ADDRESS",
+                "HYPRLAND_INSTANCE_SIGNATURE",
+            )
+        )
 
     def _set_state(self, state, code=None):
         with self._state_lock:
@@ -171,8 +266,12 @@ class HypruseBridge:
         return {
             "state": state,
             "error_code": code,
-            "message": _ERROR_MESSAGES.get(code, "Desktop control is ready." if state == "ready"
-                                            else "Desktop control connects when requested."),
+            "message": _ERROR_MESSAGES.get(
+                code,
+                "Desktop control is ready."
+                if state == "ready"
+                else "Desktop control connects when requested.",
+            ),
             "dependencies": dependencies,
             "session_present": session_present,
         }
@@ -261,7 +360,8 @@ class HypruseBridge:
                     operation = asyncio.create_task(session.call_tool(name, arguments))
                     try:
                         done, _ = await asyncio.wait(
-                            (operation, disconnected), timeout=self.call_timeout,
+                            (operation, disconnected),
+                            timeout=self.call_timeout,
                             return_when=asyncio.FIRST_COMPLETED,
                         )
                         if disconnected in done:
@@ -353,8 +453,10 @@ class HypruseBridge:
         try:
             asyncio.run(self._serve())
         except (Exception, asyncio.CancelledError) as exc:
-            code = "closed" if self._closing.is_set() else (
-                self._abort_code or self._failure_code(exc)
+            code = (
+                "closed"
+                if self._closing.is_set()
+                else (self._abort_code or self._failure_code(exc))
             )
         finally:
             self.snapshot, self.snapshot_at = None, 0
@@ -418,6 +520,13 @@ class HypruseBridge:
             self._cancel_worker("call_timeout")
             self._fail_pending("call_timeout")
             return future.result()
+
+    @staticmethod
+    def peek_snapshot():
+        """Read compositor state without resetting the MCP child's strict seat guard."""
+        from hypruse.hyprctl import snapshot  # noqa: PLC0415 - optional dependency
+
+        return snapshot()
 
     def _cancel_worker(self, code="closed"):
         self._abort_code = code
@@ -545,22 +654,7 @@ class HypruseTool(BaseTool):
                 raise ValueError(
                     "Use the guarded terminal tool for typing executable terminal content."
                 )
-        consequential = (
-            name in {"pointer", "use_bind"}
-            or (name == "hypr" and args.get("action") == "close_window")
-            or (
-                name == "click_ui"
-                and (bool(args.get("mark")) or COMMIT.search(str(args.get("name", ""))))
-            )
-            or (
-                name == "keyboard"
-                and args.get("action") == "key"
-                and any(
-                    key in str(args.get("keys", "")).lower()
-                    for key in ("enter", "return", "delete")
-                )
-            )
-        )
+        consequential = needs_approval(name, args, self.bridge)
         action_summary = json.dumps(
             {k: v for k, v in args.items() if k != "text"}, ensure_ascii=False
         )[:500]
@@ -568,7 +662,7 @@ class HypruseTool(BaseTool):
             if not context.confirm(f"Approve desktop action {name}: {action_summary}?"):
                 raise PermissionError("Desktop action was declined.")
             return True
-        return False
+        return consequential
 
     @staticmethod
     def _steps(name, args):
@@ -577,9 +671,7 @@ class HypruseTool(BaseTool):
         return [(name, args)]
 
     def _pin_targets(self, args, snapshot):
-        active = (snapshot or {}).get("active_window") or (snapshot or {}).get("active")
-        if isinstance(active, dict):
-            active = active.get("address")
+        active = _active_address(snapshot)
         for name, step in self._steps(self.operation, args):
             if active and name == "click_ui" and not step.get("window"):
                 step["window"] = active
@@ -616,15 +708,7 @@ class HypruseTool(BaseTool):
         for name, step in self._steps(self.operation, args):
             target = step.get("window") or step.get("target")
             if target:
-                previous, current = old_windows.get(target), new_windows.get(target)
-                if (
-                    previous is None
-                    or current is None
-                    or any(
-                        previous.get(key) is not None and previous[key] != current.get(key)
-                        for key in ("class", "pid")
-                    )
-                ):
+                if not _same_window(before, self.bridge.snapshot, target, check_title=True):
                     raise RuntimeError(
                         "The approved target changed or closed; the action was not delivered."
                     )
@@ -639,9 +723,7 @@ class HypruseTool(BaseTool):
                 )
         self._validate(self.operation, args, context, request_approval=False)
         if any(name == "use_bind" for name, _step in self._steps(self.operation, args)):
-            active = (before or {}).get("active_window") or (before or {}).get("active")
-            if isinstance(active, dict):
-                active = active.get("address")
+            active = _active_address(before)
             if active:
                 if active not in new_windows:
                     raise RuntimeError(
@@ -659,22 +741,207 @@ class HypruseTool(BaseTool):
         if task:
             task.check()
 
+    def _verify_input_target(self, address, before, context, *, observe):
+        current = self.bridge.snapshot
+        if observe:
+            peek = getattr(self.bridge, "peek_snapshot", None)
+            if peek:
+                try:
+                    current = peek()
+                except Exception:
+                    current = None
+            else:
+                checked = HypruseTool(self.bridge).execute({}, context)
+                current = self.bridge.snapshot if checked["success"] else None
+            if current is None:
+                self._invalidate_input_state(clear_snapshot=True)
+                return _failure(
+                    "observation_unavailable", "Could not refresh the intended window.", pause=True,
+                )
+            if _active_address(before) != _active_address(current):
+                self._invalidate_input_state(clear_snapshot=True)
+                return _failure(
+                    "target_changed",
+                    "Desktop focus changed before the input was sent.",
+                    pause=True,
+                )
+            previous_cursor = (before or {}).get("cursor")
+            if previous_cursor is not None and previous_cursor != current.get("cursor"):
+                self._invalidate_input_state(clear_snapshot=True)
+                return _failure(
+                    "target_changed", "The pointer moved before the input was sent.", pause=True,
+                )
+        if not _same_window(before, current, address, check_title=True):
+            self._invalidate_input_state(clear_snapshot=True)
+            return _failure(
+                "target_changed",
+                "The window changed or closed. Check the open tab or document before typing.",
+                pause=True,
+            )
+        return None
+
+    def _focus_input_target(self, address, before, context):
+        if _active_address(self.bridge.snapshot) != address:
+            focused = HypruseTool(self.bridge, "hypr").execute(
+                {"action": "focus_window", "target": address}, context,
+            )
+            if not focused["success"]:
+                return _failure("target_changed", focused["error"], pause=True)
+        return self._verify_input_target(address, before, context, observe=False)
+
+    def _invalidate_input_state(self, *, clear_snapshot=False):
+        self.bridge.policy_evidence = {}
+        self.bridge.policy_input = None
+        if clear_snapshot:
+            self.bridge.snapshot, self.bridge.snapshot_at = None, 0
+
     def execute(self, arguments, context):
+        if self.operation != "sequence":
+            return self._execute_single(arguments, context)
+        args = copy.deepcopy(arguments)
+        self._validate("sequence", args, context, request_approval=False)
+        results = []
+        pending = list(args["steps"])
+        completed_steps = 0
+        delivered_mutation = False
+        images, preview = [], None
+        while pending:
+            task = getattr(context, "task", None)
+            if task:
+                try:
+                    task.check()
+                except (InterruptedError, RuntimeError):
+                    if delivered_mutation:
+                        self._invalidate_input_state(clear_snapshot=True)
+                    raise
+            batch = []
+            batch_window = None
+            for step in pending:
+                operation = step["op"]
+                # Only input micro-sequences whose effects cannot navigate away
+                # are batched. Activations and workspace changes form boundaries.
+                batchable = (operation == "pointer" and step.get("action") == "move") or (
+                    operation == "keyboard"
+                    and (
+                        step.get("action") == "type"
+                        or (
+                            step.get("action") == "key"
+                            and key_parts(step.get("keys")) in ({"ctrl", "l"}, {"ctrl", "a"})
+                        )
+                    )
+                )
+                if not batchable or needs_approval(operation, step, self.bridge):
+                    break
+                if operation == "keyboard":
+                    if batch_window and step["window"] != batch_window:
+                        break
+                    batch_window = step["window"]
+                batch.append(step)
+            if len(batch) > 1:
+                child_args = {"steps": batch}
+                child = self
+                del pending[: len(batch)]
+            else:
+                step = pending.pop(0)
+                child_args = {k: v for k, v in step.items() if k != "op"}
+                child = HypruseTool(self.bridge, step["op"])
+            if not pending and "then" in args and child.operation not in OBSERVATIONS | {"launch"}:
+                child_args.setdefault("then", args["then"])
+            activity = (
+                task.action_start("hypruse__" + child.operation, child_args) if task else None
+            )
+            try:
+                result = child._execute_single(child_args, context)
+            except BaseException as exc:
+                if delivered_mutation:
+                    self._invalidate_input_state(clear_snapshot=True)
+                if task:
+                    task.action_finish(
+                        activity,
+                        "cancelled" if isinstance(exc, InterruptedError) else "failed",
+                        "Action interrupted",
+                    )
+                raise
+            success = result.get("success", False)
+            delivery = result.get("delivery", "delivered" if success else "not_delivered")
+            executed = (
+                (len(child_args["steps"]) if child is self else 1)
+                if success else result.get("completed_steps", 0)
+            )
+            if child.operation not in OBSERVATIONS and delivery != "not_delivered":
+                delivered_mutation = True
+                if task:
+                    task.outcome(
+                        {
+                            **result,
+                            "tool": child.name,
+                            "delivery": delivery,
+                            "sequence_child": True,
+                            "completed_steps": executed,
+                        },
+                        child_args,
+                        track_repeat=False,
+                    )
+            if task:
+                task.action_finish(
+                    activity, "completed" if result.get("success") else "failed", "Result received"
+                )
+            fresh_images = result.pop("_images", [])
+            fresh_preview = result.pop("preview", None)
+            if fresh_images or child.operation not in OBSERVATIONS:
+                images, preview = fresh_images, fresh_preview
+            completed_steps += executed
+            if not success:
+                if delivered_mutation and delivery == "not_delivered":
+                    delivery = "partial_delivery"
+                if delivered_mutation:
+                    self._invalidate_input_state(clear_snapshot=True)
+                return _failure(
+                    result["error_code"], result["error"], delivery=delivery,
+                    pause=result.get("pause", False) or delivered_mutation,
+                    completed_steps=completed_steps,
+                    output={"completed": results, "stopped": result.get("output")},
+                )
+            results.append(result)
+        return {
+            "success": True,
+            "output": results,
+            "completed_steps": completed_steps,
+            "_images": images,
+            "preview": preview,
+            "verification": "Sequence delivered in order; inspect returned state",
+        }
+
+    def _execute_single(self, arguments, context):
         args = copy.deepcopy(arguments)
         before = copy.deepcopy(self.bridge.snapshot)
         self._pin_targets(args, before)
+        input_window = next(
+            (step.get("window") for operation, step in self._steps(self.operation, args)
+             if operation == "keyboard"),
+            None,
+        )
+        if input_window and not self._validate(
+            self.operation, args, context, request_approval=False,
+        ):
+            failed = self._verify_input_target(input_window, before, context, observe=True)
+            if failed:
+                return failed
         approved = self._validate(self.operation, args, context)
         if approved:
             try:
                 self._after_approval(args, before, context)
             except (RuntimeError, ValueError) as exc:
-                return {
-                    "success": False,
-                    "error": str(exc),
-                    "pause": True,
-                    "verification": "Approval handoff failed; "
-                    "the requested action was not delivered.",
-                }
+                return _failure("target_changed", str(exc), pause=True)
+        if input_window:
+            task = getattr(context, "task", None)
+            if task:
+                task.check()
+            failed = self._focus_input_target(input_window, before, context)
+            if failed:
+                return failed
+            if task:
+                task.check()
         if self.operation not in OBSERVATIONS and self.operation != "launch":
             args.setdefault(
                 "then", "ui" if self.operation in {"keyboard", "click_ui"} else "desktop"
@@ -682,42 +949,24 @@ class HypruseTool(BaseTool):
         try:
             raw = self.bridge.call(self.operation, args)
         except HypruseConnectionError as exc:
-            uncertain = exc.delivery == "uncertain_delivery"
-            return {
-                "success": False,
-                "error": str(exc),
-                "error_code": exc.error_code,
-                "delivery": exc.delivery,
-                "pause": True,
-                "verification": "Delivery is uncertain; re-observe before retrying."
-                if uncertain else "The requested desktop operation was not delivered.",
-            }
+            self._invalidate_input_state(clear_snapshot=True)
+            return _failure(exc.error_code, str(exc), delivery=exc.delivery, pause=True)
         except Exception:
-            return {
-                "success": False,
-                "error": _ERROR_MESSAGES["connection_lost"],
-                "error_code": "connection_lost",
-                "delivery": "not_delivered" if self.operation in OBSERVATIONS
-                else "uncertain_delivery",
-                "pause": True,
-                "verification": "The desktop observation failed."
-                if self.operation in OBSERVATIONS
-                else "Delivery is uncertain; re-observe before retrying.",
-            }
-        if raw.get("isError"):
-            error = " ".join(p.get("text", "") for p in raw.get("content", []))
-            pause = bool(
-                re.search(
-                    r"seat|took.*control|focus.*changed|cursor.*moved|timed out",
-                    error,
-                    re.IGNORECASE,
-                )
+            self._invalidate_input_state(clear_snapshot=True)
+            delivery = "not_delivered" if self.operation in OBSERVATIONS else "uncertain_delivery"
+            return _failure(
+                "connection_lost", _ERROR_MESSAGES["connection_lost"], pause=True,
+                delivery=delivery,
             )
-            return {"success": False, "error": error, "pause": pause}
-        images, text = [], []
+        blocks = raw.get("content", [])
+        text = [block["text"] for block in blocks if isinstance(block.get("text"), str)]
+        failure = _reply_failure(
+            self.operation, raw, text, len(args.get("steps", [])),
+        )
+        images = []
         preview = None
-        for block in raw.get("content", []):
-            if block.get("type") == "image":
+        for block in blocks:
+            if block.get("type") == "image" and not failure:
                 preview = captures.add(block["data"], block["mimeType"])
                 images.append(
                     {
@@ -728,8 +977,6 @@ class HypruseTool(BaseTool):
                         },
                     }
                 )
-            elif block.get("type") == "text":
-                text.append(block.get("text", ""))
 
         def without_images(value):
             if isinstance(value, dict):
@@ -745,10 +992,26 @@ class HypruseTool(BaseTool):
             return value
 
         output = without_images(raw.get("structuredContent") or {"text": text})
+        if not raw.get("structuredContent"):
+            decoded = []
+            for block in text:
+                try:
+                    value = json.loads(block)
+                    if isinstance(value, (dict, list)):
+                        decoded.append(value)
+                except (ValueError, TypeError):
+                    pass
+            if decoded:
+                output = without_images(decoded[0] if len(decoded) == 1 else decoded)
+
+        if failure:
+            if self.operation not in OBSERVATIONS:
+                self._invalidate_input_state(clear_snapshot=failure["pause"])
+            return {**failure, "output": output}
 
         def find_snapshot(value):
             if isinstance(value, dict):
-                if "windows" in value:
+                if isinstance(value.get("windows"), list):
                     return value
                 for nested in value.values():
                     found = find_snapshot(nested)
@@ -761,20 +1024,128 @@ class HypruseTool(BaseTool):
                         return found
             return None
 
-        snapshot = find_snapshot(output)
-        if snapshot is None:
-            for value in text:
-                try:
-                    candidate = json.loads(value)
-                    snapshot = find_snapshot(candidate)
-                    if snapshot is not None:
-                        if self.operation == "desktop":
-                            output = candidate
-                        break
-                except json.JSONDecodeError:
-                    pass
+        if not hasattr(self.bridge, "policy_evidence"):
+            self.bridge.policy_evidence = {}
+        if self.operation == "binds":
+            self.bridge.policy_bindings = (time.monotonic(), output)
+        elif self.operation not in OBSERVATIONS:
+            self.bridge.policy_evidence.clear()
+            previous = getattr(self.bridge, "policy_input", None)
+            self.bridge.policy_input = None
+            if self.operation == "keyboard":
+                window = args.get("window")
+                record = next(
+                    (
+                        w
+                        for w in (self.bridge.snapshot or {}).get("windows", [])
+                        if w.get("address") == window
+                    ),
+                    {},
+                )
+                browser = re.search(
+                    r"brave|firefox|chrom(e|ium)", str(record.get("class", "")), re.IGNORECASE
+                )
+                if (
+                    browser
+                    and args.get("action") == "key"
+                    and key_parts(args.get("keys")) == {"ctrl", "l"}
+                ):
+                    self.bridge.policy_input = (time.monotonic(), window, "address")
+                elif (
+                    args.get("action") == "type"
+                    and previous
+                    and previous[1] == window
+                    and time.monotonic() - previous[0] < 5
+                ):
+                    self.bridge.policy_input = (time.monotonic(), window, previous[2])
+        if self.operation == "sequence":
+            steps = args.get("steps", [])
+            if (
+                len(steps) >= 2
+                and steps[0].get("op") == "keyboard"
+                and key_parts(steps[0].get("keys")) == {"ctrl", "l"}
+                and all(
+                    step.get("op") == "keyboard"
+                    and step.get("action") == "type"
+                    and step.get("window") == steps[0].get("window")
+                    for step in steps[1:]
+                )
+            ):
+                window = steps[0].get("window")
+                record = next(
+                    (
+                        w
+                        for w in (self.bridge.snapshot or {}).get("windows", [])
+                        if w.get("address") == window
+                    ),
+                    {},
+                )
+                if re.search(
+                    r"brave|firefox|chrom(e|ium)", str(record.get("class", "")), re.IGNORECASE
+                ):
+                    self.bridge.policy_input = (time.monotonic(), window, "address")
+        typed = (
+            [args]
+            if self.operation == "keyboard"
+            else args.get("steps", [])
+            if self.operation == "sequence"
+            else []
+        )
+        if any(
+            step.get("action") == "type"
+            and re.search(
+                r"^\s*(javascript:|data:|chrome://settings|about:config)",
+                str(step.get("text", "")),
+                re.IGNORECASE,
+            )
+            for step in typed
+        ):
+            self.bridge.policy_input = None
+        if self.operation in {"ui", "marks", "click_ui", "keyboard"}:
+            window = args.get("window") or (self.bridge.snapshot or {}).get("active_window")
+            self.bridge.policy_evidence[window] = (time.monotonic(), output)
+        returns_snapshot = self.operation == "desktop" or args.get("then") == "desktop"
+        snapshot = find_snapshot(output) if returns_snapshot else None
+        peek = getattr(self.bridge, "peek_snapshot", None)
+        if snapshot is None and peek and self.operation not in OBSERVATIONS:
+            # A focused accessibility read can follow an action without carrying
+            # the new active window, document title or cursor. Refresh the local
+            # cache while preserving the requested post-action evidence.
+            with contextlib.suppress(Exception):
+                snapshot = peek()
         if snapshot is not None:
+            old = self.bridge.snapshot or {}
+
+            def geometry(value):
+                return [
+                    (w.get("address"), w.get("at"), w.get("size")) for w in value.get("windows", [])
+                ]
+
+            if geometry(old) != geometry(snapshot) or old.get("active_window") != snapshot.get(
+                "active_window"
+            ):
+                self.bridge.policy_evidence.clear()
+                self.bridge.policy_input = None
             self.bridge.snapshot, self.bridge.snapshot_at = snapshot, time.monotonic()
+        if self.operation == "hypr" and args.get("action") == "focus_window":
+            if snapshot is None and args.get("then") != "desktop":
+                observation = HypruseTool(self.bridge).execute({}, context)
+                if observation["success"]:
+                    snapshot = self.bridge.snapshot
+            target = args.get("target")
+            if (
+                snapshot is None
+                or _active_address(snapshot) != target
+                or not _same_window(before, snapshot, target)
+            ):
+                self._invalidate_input_state(clear_snapshot=True)
+                return _failure(
+                    "target_changed", "Could not verify focus on the intended window.",
+                    delivery="uncertain_delivery", pause=True,
+                )
+        if self.operation == "desktop" and snapshot is None:
+            self._invalidate_input_state(clear_snapshot=True)
+            return _failure("observation_unavailable", "The desktop did not return a window list.")
         return {
             "success": True,
             "output": output,

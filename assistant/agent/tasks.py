@@ -5,6 +5,7 @@ from __future__ import annotations
 # Task failures carry precise user-facing pause reasons.
 # ruff: noqa: TRY003
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -14,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+from assistant.integrations.desktop_policy import action_label
 from assistant.security import redact_secrets
 
 
@@ -117,6 +119,9 @@ class TaskRun:
             "created_at": time.time(),
         }
         self._repeats = {}
+        self._activity_lock = threading.RLock()
+        self.data["activities"] = []
+        self.data["activity"] = None
 
     def publish(self):
         self.data["updated_at"] = time.time()
@@ -126,6 +131,36 @@ class TaskRun:
         self.data.update(fields)
         self.publish()
 
+    def action_start(self, tool, arguments):
+        with self._activity_lock:
+            target = str(arguments.get("window") or arguments.get("target") or "")
+            target = target if re.fullmatch(r"0x[0-9a-fA-F]+", target) else ""
+            item = {
+                "id": uuid.uuid4().hex,
+                "tool": tool,
+                "label": action_label(tool, arguments),
+                "operation": tool.removeprefix("hypruse__"),
+                "action": str(arguments.get("action", ""))[:40],
+                "target": target,
+                "status": "running",
+                "started_at": time.time(),
+            }
+            self.data["activities"] = (self.data["activities"] + [item])[-50:]
+            self.data["activity"] = item
+            self.data["detail"] = item["label"]
+            self.publish()
+            return item["id"]
+
+    def action_finish(self, action_id, status, summary):
+        with self._activity_lock:
+            for item in self.data["activities"]:
+                if item["id"] == action_id:
+                    item.update(status=status, finished_at=time.time(), summary=summary)
+                    item["duration_ms"] = max(
+                        0, round((item["finished_at"] - item["started_at"]) * 1000)
+                    )
+            self.publish()
+
     def check(self):
         if self.cancelled.is_set():
             raise InterruptedError(
@@ -134,7 +169,7 @@ class TaskRun:
         if time.monotonic() >= self.deadline:
             raise TaskPaused("Time budget reached. Resume from the checkpoint when ready.")
 
-    def outcome(self, result, arguments):
+    def outcome(self, result, arguments, *, track_repeat=True):
         safe = {k: v for k, v in result.items() if k not in {"_images", "preview"}}
         safe["arguments"] = redact_secrets(arguments)
         # Keep structured evidence, never binary captures or arbitrarily large private content.
@@ -145,9 +180,17 @@ class TaskRun:
                 "success": result.get("success"),
                 "evidence_excerpt": encoded[:5500],
                 "truncated": True,
+                **{
+                    key: safe[key]
+                    for key in ("delivery", "error_code", "completed_steps", "sequence_child")
+                    if key in safe
+                },
             }
         self.data["outcomes"].append(safe)
         self.data["outcomes"] = self.data["outcomes"][-40:]
+        if not track_repeat:
+            self.publish()
+            return
         key = json.dumps([result.get("tool"), arguments, safe], sort_keys=True, default=str)
         self._repeats[key] = self._repeats.get(key, 0) + 1
         self.publish()

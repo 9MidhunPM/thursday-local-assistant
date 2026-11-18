@@ -241,6 +241,9 @@ def approval_bridge():
     def call(name, _args):
         if name == "desktop":
             return {"structuredContent": copy.deepcopy(current), "content": []}
+        if name == "hypr" and _args.get("action") == "focus_window":
+            current["active_window"] = _args["target"]
+            return {"structuredContent": copy.deepcopy(current), "content": []}
         return {"structuredContent": {"delivered": name}, "content": []}
 
     bridge.call = Mock(side_effect=call)
@@ -260,8 +263,8 @@ def test_approval_cursor_focus_and_delay_rearm_before_one_keypress():
         {"action": "key", "keys": "enter", "window": "0x1"}, context
     )
     assert result["success"]
-    assert [call.args[0] for call in bridge.call.call_args_list] == ["desktop", "keyboard"]
-    assert bridge.call.call_args_list[1].args[1]["window"] == "0x1"
+    assert [call.args[0] for call in bridge.call.call_args_list] == ["desktop", "hypr", "keyboard"]
+    assert bridge.call.call_args_list[2].args[1]["window"] == "0x1"
     assert bridge.snapshot["cursor"] == [900, 800]
     context.confirm.assert_called_once()
 
@@ -316,7 +319,7 @@ def test_approved_pointer_keeps_original_coordinates():
     assert args == {"action": "click"}
 
 
-def test_approved_sequence_refreshes_once_without_requesting_approval_again():
+def test_sequence_refreshes_at_each_consequential_boundary():
     bridge, _current = approval_bridge()
     context = SimpleNamespace(confirm=Mock(return_value=True))
     result = HypruseTool(bridge, "sequence").execute(
@@ -330,7 +333,7 @@ def test_approved_sequence_refreshes_once_without_requesting_approval_again():
     )
     assert result["success"]
     assert context.confirm.call_count == 2
-    assert [call.args[0] for call in bridge.call.call_args_list] == ["desktop", "sequence"]
+    assert [call.args[0] for call in bridge.call.call_args_list] == ["desktop", "keyboard", "desktop", "keyboard"]
 
 
 class RecordingTool(BaseTool):
