@@ -53,10 +53,11 @@ for up to five minutes, capped at eight images. Hypruse also manages its own bou
 in the session runtime directory.
 
 Desktop actions run serially. Strict seat and authentication guards remain enabled; authentication
-overrides and clipboard access are withheld from the model. Pointer actions, compositor keybinds,
-window closure, Enter/Delete keys, and named consequential submissions request approval. Named
-reversible controls can run within the task. A refusal or uncertain delivery is evidence of a
-failure, not evidence of completion. Seat interference and transport failures pause the task.
+overrides and clipboard access are withheld from the model. Routine movement, scrolling, typing,
+search navigation, and reversible controls can run within the task. Closures, file saves, deletion,
+sending, publishing, purchases, and security changes request approval. Thursday revalidates the
+target after approval. Ambiguous controls need a clearer target. If a sequence is interrupted or
+delivery is uncertain, Thursday pauses and records the steps that ran.
 Terminal content goes through the guarded terminal tool, and launch only accepts trusted apps,
 paths/URLs, and basic window flags.
 
@@ -67,7 +68,7 @@ pauses before delivery. Strict seat guards remain enabled for unrelated interfer
 
 Apps differ in accessibility support. Use `ui(actionable=false)` when a GTK text field is omitted
 from the actionable-only view. When an app has no tree, use cropped captures and zoom, followed by
-a confirmed pointer action. The wrapper's guards are conservative; they are not a general-purpose
+a pointer action using the same approval rules. The wrapper's guards are conservative; they are not a general-purpose
 security sandbox for every existing integration or shell command.
 
 ## Tasks and memory
@@ -138,6 +139,18 @@ Rerun deliberately: `--live` makes paid requests, and fixtures do not touch the 
 .venv/bin/python -m assistant.evals.copilot --live --output /tmp/luna-comparison.json
 .venv/bin/python -m assistant.evals.copilot --live --cases 4,17 --output /tmp/luna-targets.json
 ```
+
+## Desktop requests and follow-ups
+
+For desktop requests, Thursday starts with the current workspace on the focused monitor.
+She reads the specific app or tab the task needs. Across follow-ups in the same conversation,
+she carries observed windows, ordered search matches, and the selected file. Window
+references are checked again before use. Ambiguous window names and controls can require
+a choice, and interrupted desktop actions keep their recorded progress for Resume.
+
+On a running Sumi desktop, requests such as “show my files” and “open Bluetooth” can
+open the matching island view. Thursday verifies the view through Sumi. Desktop tasks
+can send a quiet local notice when they finish or need attention while their chat is out of view.
 
 ## Verification and limits
 
