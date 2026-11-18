@@ -60,6 +60,7 @@ TOOL_GROUPS: dict[str, str] = {
     "brightness_control": "desktop",
     "clipboard": "desktop",
     "window_management": "desktop",
+    "sumi_open": "desktop",
     "take_screenshot": "desktop",
     "send_notification": "desktop",
     # System
@@ -143,6 +144,10 @@ KEYWORD_GROUPS: list[tuple[tuple[str, ...], frozenset[str]]] = [
     ),
     (
         ("clipboard", "screenshot", "window", "brightness", "notify", "notification", "desktop", "screen", "click", "type", "workspace", "form", "arrange", "hypruse"),
+        frozenset({"desktop"}),
+    ),
+    (
+        ("sumi", "island", "bluetooth", "wi-fi", "wifi", "show my files", "file finder"),
         frozenset({"desktop"}),
     ),
     (
