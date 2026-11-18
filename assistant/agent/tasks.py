@@ -53,9 +53,16 @@ class TaskStore:
             row = conn.execute("SELECT data FROM task_runs WHERE id=?", (task_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
-    def latest(self, conversation_id=None):
+    def latest(self, conversation_id=None, *, before=None):
         with self._lock, self._connect() as conn:
-            if conversation_id is None:
+            if before:
+                row = conn.execute(
+                    "SELECT data FROM task_runs WHERE json_extract(data,'$.conversation_id') IS ? "
+                    "AND rowid < (SELECT rowid FROM task_runs WHERE id=?) "
+                    "ORDER BY rowid DESC LIMIT 1",
+                    (conversation_id, before),
+                ).fetchone()
+            elif conversation_id is None:
                 row = conn.execute(
                     "SELECT data FROM task_runs ORDER BY rowid DESC LIMIT 1"
                 ).fetchone()
