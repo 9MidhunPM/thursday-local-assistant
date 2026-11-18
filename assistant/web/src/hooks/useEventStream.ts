@@ -164,7 +164,7 @@ export function useEventStream({
 
     function connect() {
       if (stoppedRef.current) return
-      const es = new EventSource(`${window.location.origin}/api/events?client_id=${clientId}`)
+      const es = new EventSource(`${window.location.origin}/api/events?client_id=${clientId}&view_id=${clientId}`)
       sourceRef.current = es
 
       es.onopen = () => {

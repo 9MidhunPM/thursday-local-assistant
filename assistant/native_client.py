@@ -95,6 +95,8 @@ class NativeClient:
         self.base_url = base_url.rstrip("/")
         self._token = token
         self._emit_callback = emit
+        self._view_id = uuid.uuid4().hex
+        self._view_sequence = 0
         self._emit_lock = threading.Lock()
         self._stop = threading.Event()
         self.runtime = private_dir(runtime) if runtime else runtime_dir("native")
@@ -203,7 +205,8 @@ class NativeClient:
                 self._output_observer.stop()
 
     def stream_once(self) -> None:
-        with self.request("/api/events?client=quickshell&client_id=native", timeout=35) as response:
+        path = f"/api/events?client=quickshell&client_id=native&view_id={self._view_id}"
+        with self.request(path, timeout=35) as response:
             self.emit("native_connection", {"connected": True})
             for event in iter_sse(response):
                 if self._stop.is_set():
@@ -283,6 +286,18 @@ class NativeClient:
         """Only a small allowlist can cross from QML into the local privileged API."""
         kind = command.get("command")
         try:
+            if kind == "task_view":
+                conversation_id = command.get("conversation_id")
+                if conversation_id is not None and (type(conversation_id) is not int or conversation_id <= 0):
+                    return
+                self._view_sequence += 1
+                with contextlib.suppress(OSError, ValueError, http.client.HTTPException):
+                    with self.request("/api/task-view", {
+                        "view_id": self._view_id, "sequence": self._view_sequence,
+                        "conversation_id": conversation_id,
+                    }, timeout=2):
+                        pass
+                return
             if kind == "settings":
                 values = command.get("values", {})
                 self.settings.update(

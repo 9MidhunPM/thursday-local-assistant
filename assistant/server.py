@@ -6,6 +6,7 @@ import importlib.util
 import io
 import os
 import queue
+import re
 import socketserver
 import subprocess
 import sys
@@ -22,6 +23,7 @@ import httpx
 from assistant.agent.confirm import confirm_broker
 from assistant.integrations.browser_bridge import browser_bridge
 from assistant.runtime import AssistantRuntime
+from assistant.task_attention import TaskAttention, notify_if_offscreen
 from assistant.paths import runtime_dir, private_write, purge_runtime_files
 from assistant.security import (
     api_token,
@@ -67,14 +69,43 @@ class EventBroadcaster:
         self.shutdown_timer = None
         self._shutting_down = False
 
-    def add_client(self, client_type: str = "web", client_id: str = "") -> queue.Queue[dict[str, Any]]:
+    def add_client(
+        self, client_type: str = "web", client_id: str = "", *, view_id: str = "",
+    ) -> queue.Queue[dict[str, Any]]:
         q: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=100)
         with self.lock:
-            self.clients.append({"queue": q, "type": client_type, "id": client_id})
+            view_sequence = -1
+            if view_id:
+                for client in self.clients:
+                    if client["view_id"] == view_id:
+                        view_sequence = client["view_sequence"]
+                        client["view_id"] = ""
+                        client["view_conversation"] = None
+            self.clients.append({
+                "queue": q, "type": client_type, "id": client_id,
+                "view_id": view_id, "view_sequence": view_sequence, "view_conversation": None,
+            })
             if self.shutdown_timer:
                 self.shutdown_timer.cancel()
                 self.shutdown_timer = None
         return q
+
+    def report_task_view(self, view_id: str, sequence: int, conversation_id: int | None) -> bool:
+        with self.lock:
+            # During reconnect two sockets can briefly share an ID. Only the
+            # newest socket can own the view.
+            for client in reversed(self.clients):
+                if client["view_id"] != view_id:
+                    continue
+                if sequence > client["view_sequence"]:
+                    client["view_sequence"] = sequence
+                    client["view_conversation"] = conversation_id
+                return True
+            return False
+
+    def has_task_view(self, conversation_id: int) -> bool:
+        with self.lock:
+            return any(client["view_conversation"] == conversation_id for client in self.clients)
 
     def remove_client(self, q: queue.Queue[dict[str, Any]]) -> None:
         with self.lock:
@@ -150,6 +181,7 @@ class EventBroadcaster:
 
 
 broadcaster = EventBroadcaster()
+task_attention = TaskAttention()
 server_runtime: AssistantRuntime | None = None
 is_busy = False
 busy_lock = threading.Lock()
@@ -511,6 +543,9 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             params = parse_qs(urlparse(self.path).query)
             client_type = params.get("client", ["web"])[0]
             client_id = params.get("client_id", [""])[0][:100]
+            view_id = params.get("view_id", [""])[0]
+            if not re.fullmatch(r"[a-fA-F0-9-]{32,36}", view_id):
+                view_id = ""
             if client_type not in ("web", "quickshell"):
                 client_type = "web"
 
@@ -521,7 +556,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
 
-            q = broadcaster.add_client(client_type, client_id)
+            q = broadcaster.add_client(client_type, client_id, view_id=view_id)
             try:
                 # Send initial state including buffered logs and the FULL history
                 # of the active conversation (not the pruned model context window).
@@ -563,7 +598,6 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if parsed_path.startswith("/api/audio/"):
-            import re
             filename = parsed_path.rsplit("/", 1)[-1]
             if not re.fullmatch(r"tts_[a-f0-9]{8,32}\.mp3", filename):
                 self.send_error(404, "Audio file not found")
@@ -884,6 +918,30 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         if parsed_path.startswith("/api/") and not self._require_auth(query_token=q_token):
             return
 
+        if parsed_path == "/api/task-view":
+            if not self._require_local_origin():
+                return
+            try:
+                size = int(self.headers.get("Content-Length", 0))
+                if not 0 < size <= 1024:
+                    raise ValueError("Invalid task view size")
+                data = json.loads(self.rfile.read(size))
+                view_id = data["view_id"]
+                sequence = data["sequence"]
+                conversation_id = data["conversation_id"]
+                if (
+                    not isinstance(view_id, str) or not re.fullmatch(r"[a-fA-F0-9-]{32,36}", view_id)
+                    or type(sequence) is not int or sequence < 0
+                    or (conversation_id is not None and (type(conversation_id) is not int or conversation_id <= 0))
+                ):
+                    raise ValueError("Invalid task view")
+            except (KeyError, TypeError, ValueError):
+                self._send_json(400, {"error": "Invalid task view"})
+                return
+            ok = broadcaster.report_task_view(view_id, sequence, conversation_id)
+            self._send_json(200 if ok else 404, {"ok": ok})
+            return
+
         if parsed_path == "/api/browser-session":
             # Renewal requires the operator token again, never only an old cookie.
             supplied = self._headers_dict()
@@ -986,6 +1044,7 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                 task = tasks.create(previous["goal"], cid, server_runtime.config.agent.task_timeout_sec, parent=task_id)
                 task.web = True
                 task.data["outcomes"] = previous["outcomes"]
+                task.data["desktop_task"] = previous.get("desktop_task", False)
                 task.publish()
                 is_busy = True
             prompt = "Resume this task: " + previous["goal"]
@@ -1270,6 +1329,17 @@ class ThursdayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             with busy_lock:
                 is_busy = False
             broadcaster.broadcast("status", {"busy": False})
+            if task and conversation_id is not None and not task.cancelled.is_set():
+                notice = task_attention.finish(task.data)
+                if notice:
+                    threading.Thread(
+                        target=notify_if_offscreen,
+                        args=(
+                            conversation_id, notice, broadcaster.has_task_view,
+                            lambda: active_conversation_id,
+                        ),
+                        daemon=True,
+                    ).start()
     def _transcribe_audio(self, audio_data: bytes) -> dict[str, Any]:
         rt = server_runtime
         if not rt or not rt.stt:

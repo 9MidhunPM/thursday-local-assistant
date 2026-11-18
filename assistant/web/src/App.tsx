@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { MotionConfig } from 'framer-motion'
 import Header from '@/components/Header'
 import ChatHistory from '@/components/ChatHistory'
@@ -17,9 +17,13 @@ import TaskPanel from '@/components/TaskPanel'
 import MemoryReview from '@/components/MemoryReview'
 import ConnectionGate from '@/components/ConnectionGate'
 import type { HistoryMessage, TaskState } from '@/types'
-import { clientId } from '@/lib/client'
+import { clientId, reportTaskView } from '@/lib/client'
 
 const TTS_STORAGE_KEY = 'ttsEnabled'
+
+function visibleConversation(id: number | null) {
+  return document.visibilityState === 'visible' && document.hasFocus() ? id : null
+}
 
 export default function App() {
   const [state, dispatch] = useReducer(chatReducer, initialState)
@@ -50,6 +54,31 @@ export default function App() {
 
   const conversations = useConversations(handleLoadConversation)
 
+  const taskView = useRef<number | null | undefined>(undefined)
+  const publishTaskView = useCallback((id: number | null) => {
+    if (taskView.current === undefined || taskView.current === id) return
+    taskView.current = id
+    reportTaskView(id)
+  }, [])
+
+  useEffect(() => {
+    const updateTaskView = () => publishTaskView(visibleConversation(conversations.activeId))
+    const hide = () => publishTaskView(null)
+    updateTaskView()
+    window.addEventListener('focus', updateTaskView)
+    window.addEventListener('blur', hide)
+    window.addEventListener('pageshow', updateTaskView)
+    window.addEventListener('pagehide', hide)
+    document.addEventListener('visibilitychange', updateTaskView)
+    return () => {
+      window.removeEventListener('focus', updateTaskView)
+      window.removeEventListener('blur', hide)
+      window.removeEventListener('pageshow', updateTaskView)
+      window.removeEventListener('pagehide', hide)
+      document.removeEventListener('visibilitychange', updateTaskView)
+    }
+  }, [conversations.activeId, publishTaskView])
+
   useEffect(() => {
     let current = true
     void fetch(`/api/tasks?conversation_id=${conversations.activeId ?? ''}`)
@@ -67,7 +96,12 @@ export default function App() {
     onTtsStop: () => audio.stopAll(),
     onTtsSynthesisDone: () => audio.finishPreparing(),
     onStopVisualizer: () => audio.stopVisualizer(),
-    onInitConversation: (id) => conversations.setActiveId(id),
+    onInitConversation: (id) => {
+      conversations.setActiveId(id)
+      // The server registers this SSE connection before sending init.
+      taskView.current = null
+      publishTaskView(visibleConversation(id))
+    },
     onConversationUpdated: () => {
       void conversations.refresh()
     },

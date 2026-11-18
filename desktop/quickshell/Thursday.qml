@@ -34,6 +34,9 @@ Scope {
     property bool sendPending: false
     property bool hudDismissed: true
     property int conversationId: -1
+    property bool taskViewReady: false
+    readonly property int visibleTaskConversation: opened ? conversationId : -1
+    onVisibleTaskConversationChanged: reportTaskView()
     property int pendingRow: -1
     property string pendingText: ""
     property string latestAnswer: ""
@@ -121,6 +124,11 @@ Scope {
     function send(command) {
         if (transport.running) transport.write(JSON.stringify(command) + "\n")
         else errorText = "The desktop connection is restarting. Please try again."
+    }
+    function reportTaskView() {
+        if (!taskViewReady || !transport.running) return
+        send({command: "task_view",
+            conversation_id: visibleTaskConversation > 0 ? visibleTaskConversation : null})
     }
     function submit(text) {
         text = text.trim()
@@ -269,6 +277,7 @@ Scope {
             break
         case "native_connection":
             connected = data.connected === true
+            if (!connected) taskViewReady = false
             if (connected && connectionError) { errorText = ""; connectionError = false }
             break
         case "native_health":
@@ -276,6 +285,7 @@ Scope {
             if (data.status === "offline") connected = false
             break
         case "init":
+            taskViewReady = false
             historyRequest += 1
             historyNeedsReload = false
             historyLoading = false
@@ -291,6 +301,8 @@ Scope {
             var list = data.history || []
             for (var i = 0; i < list.length; i++) appendMessage(list[i].role, list[i].content)
             if (confirmations.length) hudDismissed = false
+            taskViewReady = true
+            reportTaskView()
             break
         case "user_message":
             switchConversation(data.conversation_id)

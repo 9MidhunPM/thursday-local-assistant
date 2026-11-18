@@ -7,6 +7,7 @@ import threading
 import time
 import wave
 from types import SimpleNamespace
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -80,6 +81,28 @@ def eventually(predicate):
             return
         time.sleep(0.01)
     assert predicate()
+
+
+def test_task_view_is_bound_to_authenticated_sse_connection(native_api):
+    client, _runtime, _controller, _broker = native_api
+    view_id = uuid4().hex
+    conversation_id = server.active_conversation_id
+    data = {"view_id": view_id, "sequence": 1, "conversation_id": conversation_id}
+
+    assert client.post("/api/task-view", json=data).status_code == 404
+    with client.stream("GET", f"/api/events?view_id={view_id}") as stream:
+        assert next(stream.iter_lines()).startswith("data: ")
+        assert client.post(
+            "/api/task-view", json=data, headers={"Authorization": ""}
+        ).status_code == 401
+        assert client.post(
+            "/api/task-view", json=data, headers={"Origin": "https://untrusted.example"}
+        ).status_code == 403
+        assert client.post("/api/task-view", json=data).status_code == 200
+        assert server.broadcaster.has_task_view(conversation_id)
+        data.update(sequence=2, conversation_id=None)
+        assert client.post("/api/task-view", json=data).status_code == 200
+        assert not server.broadcaster.has_task_view(conversation_id)
 
 
 def test_voice_http_auth_origin_and_shared_task_submission(native_api):
